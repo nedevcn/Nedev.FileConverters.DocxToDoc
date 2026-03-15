@@ -14,10 +14,33 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public List<SectionModel> Sections { get; } = new List<SectionModel>();
         public List<AbstractNumberingModel> AbstractNumbering { get; } = new List<AbstractNumberingModel>();
         public List<NumberingInstanceModel> NumberingInstances { get; } = new List<NumberingInstanceModel>();
-        
+        public List<BookmarkModel> Bookmarks { get; } = new List<BookmarkModel>();
+        public List<CommentModel> Comments { get; } = new List<CommentModel>();
+        public DocumentProperties Properties { get; } = new DocumentProperties();
+
         // As the Document is parsed we will accumulate the plain text here
         // The length of this text will determine the Piece Table and CCP Text
         public string TextBuffer { get; set; } = string.Empty;
+    }
+
+    public class DocumentProperties
+    {
+        public string? Title { get; set; }
+        public string? Subject { get; set; }
+        public string? Author { get; set; }
+        public string? Manager { get; set; }
+        public string? Company { get; set; }
+        public string? Category { get; set; }
+        public string? Keywords { get; set; }
+        public string? Comments { get; set; }
+        public DateTime? Created { get; set; }
+        public DateTime? Modified { get; set; }
+        public DateTime? LastPrinted { get; set; }
+        public int? Revision { get; set; }
+        public int? TotalEditingTime { get; set; }
+        public int? Pages { get; set; }
+        public int? Words { get; set; }
+        public int? Characters { get; set; }
     }
 
     public class SectionModel
@@ -140,6 +163,10 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public CharacterProperties Properties { get; } = new CharacterProperties();
         public ImageModel? Image { get; set; }
         public HyperlinkModel? Hyperlink { get; set; }
+        public FieldModel? Field { get; set; }
+        public bool IsFieldBegin { get; set; }
+        public bool IsFieldSeparate { get; set; }
+        public bool IsFieldEnd { get; set; }
 
         public class CharacterProperties
         {
@@ -182,5 +209,98 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public int Width { get; set; }
         public int Height { get; set; }
         public string? FileName { get; set; }
+    }
+
+    public class FieldModel
+    {
+        public FieldType Type { get; set; }
+        public string Instruction { get; set; } = string.Empty;
+        public string Result { get; set; } = string.Empty;
+        public bool IsLocked { get; set; }
+        public bool IsDirty { get; set; }
+    }
+
+    public enum FieldType
+    {
+        Unknown = 0,
+        Page = 1,           // PAGE - Current page number
+        NumPages = 2,       // NUMPAGES - Total pages
+        Date = 3,           // DATE - Current date
+        Time = 4,           // TIME - Current time
+        Author = 5,         // AUTHOR - Document author
+        Title = 6,          // TITLE - Document title
+        Subject = 7,        // SUBJECT - Document subject
+        FileName = 8,       // FILENAME - Document filename
+        Hyperlink = 9,      // HYPERLINK - Hyperlink field
+        Bookmark = 10,      // BOOKMARK - Bookmark reference
+        Index = 11,         // INDEX - Table of contents/index
+        Seq = 12,           // SEQ - Sequence field
+        Ref = 13,           // REF - Cross-reference
+        MergeField = 14     // MERGEFIELD - Mail merge field
+    }
+
+    public class BookmarkModel
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public int StartCp { get; set; }
+        public int EndCp { get; set; }
+        public bool IsCollapsed { get; set; }
+    }
+
+    /// <summary>
+    /// Represents a comment/annotation in the document.
+    /// </summary>
+    public class CommentModel
+    {
+        /// <summary>
+        /// Gets or sets the unique identifier of the comment.
+        /// </summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the author of the comment.
+        /// </summary>
+        public string Author { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the initials of the author.
+        /// </summary>
+        public string Initials { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the date and time when the comment was created.
+        /// </summary>
+        public DateTime? Date { get; set; }
+
+        /// <summary>
+        /// Gets or sets the text content of the comment.
+        /// </summary>
+        public string Text { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the starting character position of the comment reference.
+        /// </summary>
+        public int StartCp { get; set; }
+
+        /// <summary>
+        /// Gets or sets the ending character position of the comment reference.
+        /// </summary>
+        public int EndCp { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether this comment is a reply to another comment.
+        /// </summary>
+        public bool IsReply { get; set; }
+
+        /// <summary>
+        /// Gets or sets the ID of the parent comment if this is a reply.
+        /// </summary>
+        public string? ParentId { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the comment is marked as done/resolved.
+        /// </summary>
+        public bool IsDone { get; set; }
     }
 }

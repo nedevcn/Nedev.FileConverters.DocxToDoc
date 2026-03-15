@@ -43,7 +43,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         public int fcPlfLfo { get; set; } // List Format Override (LFO)
         public int lcbPlfLfo { get; set; }
-        
+
+        public int fcData { get; set; } // Data stream offset for embedded objects
+        public int lcbData { get; set; }
+
+        public int fcPlcfBkmkf { get; set; } // Bookmark first CPs
+        public int lcbPlcfBkmkf { get; set; }
+        public int fcPlcfBkmkl { get; set; } // Bookmark last CPs
+        public int lcbPlcfBkmkl { get; set; }
+        public int fcSttbfbkmk { get; set; } // Bookmark names
+        public int lcbSttbfbkmk { get; set; }
+
         public int ccpText { get; set; } // Length of plain text document
         public int ccpFtn { get; set; } // Length of footnotes
         public int ccpHdd { get; set; } // Length of headers

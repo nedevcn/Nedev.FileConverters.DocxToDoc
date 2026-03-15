@@ -89,6 +89,22 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 ParseNumbering(numberingStream, docModel);
             }
 
+            // Parse Document Properties
+            var propsEntry = _archive.GetEntry("docProps/core.xml");
+            if (propsEntry != null)
+            {
+                using var propsStream = propsEntry.Open();
+                ParseDocumentProperties(propsStream, docModel);
+            }
+
+            // Parse Comments
+            var commentsEntry = _archive.GetEntry("word/comments.xml");
+            if (commentsEntry != null)
+            {
+                using var commentsStream = commentsEntry.Open();
+                ParseComments(commentsStream, docModel);
+            }
+
             StringBuilder textBuffer = new StringBuilder();
 
             Nedev.FileConverters.DocxToDoc.Model.ParagraphModel currentParagraph = null;
@@ -346,6 +362,46 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             LoadImageData(image);
                         }
                     }
+                    else if (localName == "fldChar" && currentRun != null)
+                    {
+                        // Field character (begin/separate/end)
+                        string? fldCharType = xmlReader.GetAttribute("w:fldCharType");
+                        string? fldLock = xmlReader.GetAttribute("w:fldLock");
+                        string? fldDirty = xmlReader.GetAttribute("w:fldDirty");
+
+                        switch (fldCharType)
+                        {
+                            case "begin":
+                                currentRun.IsFieldBegin = true;
+                                break;
+                            case "separate":
+                                currentRun.IsFieldSeparate = true;
+                                break;
+                            case "end":
+                                currentRun.IsFieldEnd = true;
+                                break;
+                        }
+
+                        // Create or update field model
+                        if (currentRun.IsFieldBegin)
+                        {
+                            currentRun.Field = new Nedev.FileConverters.DocxToDoc.Model.FieldModel
+                            {
+                                IsLocked = fldLock == "1" || fldLock == "true",
+                                IsDirty = fldDirty == "1" || fldDirty == "true"
+                            };
+                        }
+                    }
+                    else if (localName == "instrText" && currentRun != null)
+                    {
+                        // Field instruction text
+                        string instruction = xmlReader.ReadElementContentAsString();
+                        if (currentRun.Field != null)
+                        {
+                            currentRun.Field.Instruction = instruction;
+                            currentRun.Field.Type = ParseFieldType(instruction);
+                        }
+                    }
                 }
                 else if (xmlReader.NodeType == XmlNodeType.EndElement)
                 {
@@ -366,7 +422,94 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             docModel.TextBuffer = textBuffer.ToString();
+
+            // Parse bookmarks after document is fully read
+            ParseBookmarks(docModel);
+
             return docModel;
+        }
+
+        private void ParseBookmarks(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            // Try to load the document.xml again to find bookmarks
+            var docEntry = _archive.GetEntry("word/document.xml");
+            if (docEntry == null) return;
+
+            using var stream = docEntry.Open();
+            using var reader = XmlReader.Create(stream, new XmlReaderSettings { IgnoreWhitespace = true });
+
+            int currentCp = 0;
+            var bookmarkStarts = new Dictionary<string, int>();
+
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element)
+                {
+                    string localName = reader.LocalName;
+
+                    if (localName == "bookmarkStart")
+                    {
+                        string? id = reader.GetAttribute("w:id");
+                        string? name = reader.GetAttribute("w:name");
+                        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name))
+                        {
+                            bookmarkStarts[id] = currentCp;
+                        }
+                    }
+                    else if (localName == "bookmarkEnd")
+                    {
+                        string? id = reader.GetAttribute("w:id");
+                        if (!string.IsNullOrEmpty(id) && bookmarkStarts.TryGetValue(id, out int startCp))
+                        {
+                            // Find the bookmark name from the start
+                            var bookmarkEntry = docEntry;
+                            string? name = null;
+
+                            // Re-read to find the name
+                            using var stream2 = _archive.GetEntry("word/document.xml")?.Open();
+                            if (stream2 != null)
+                            {
+                                using var reader2 = XmlReader.Create(stream2, new XmlReaderSettings { IgnoreWhitespace = true });
+                                while (reader2.Read())
+                                {
+                                    if (reader2.NodeType == XmlNodeType.Element &&
+                                        reader2.LocalName == "bookmarkStart" &&
+                                        reader2.GetAttribute("w:id") == id)
+                                    {
+                                        name = reader2.GetAttribute("w:name");
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!string.IsNullOrEmpty(name))
+                            {
+                                docModel.Bookmarks.Add(new Nedev.FileConverters.DocxToDoc.Model.BookmarkModel
+                                {
+                                    Id = id,
+                                    Name = name,
+                                    StartCp = startCp,
+                                    EndCp = currentCp,
+                                    IsCollapsed = startCp == currentCp
+                                });
+                            }
+
+                            bookmarkStarts.Remove(id);
+                        }
+                    }
+                    else if (localName == "t")
+                    {
+                        // Add text length to current CP
+                        string text = reader.ReadElementContentAsString();
+                        currentCp += text.Length;
+                    }
+                    else if (localName == "p")
+                    {
+                        // Paragraph mark
+                        currentCp += 1;
+                    }
+                }
+            }
         }
 
         private void ParseNumbering(Stream numberingStream, Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
@@ -595,6 +738,192 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 ".emf" => "image/x-emf",
                 _ => "application/octet-stream"
             };
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.FieldType ParseFieldType(string instruction)
+        {
+            if (string.IsNullOrWhiteSpace(instruction))
+                return Nedev.FileConverters.DocxToDoc.Model.FieldType.Unknown;
+
+            // Extract the field name from the instruction
+            string fieldName = instruction.Trim().Split(' ')[0].ToUpperInvariant();
+
+            return fieldName switch
+            {
+                "PAGE" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Page,
+                "NUMPAGES" => Nedev.FileConverters.DocxToDoc.Model.FieldType.NumPages,
+                "DATE" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Date,
+                "TIME" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Time,
+                "AUTHOR" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Author,
+                "TITLE" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Title,
+                "SUBJECT" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Subject,
+                "FILENAME" => Nedev.FileConverters.DocxToDoc.Model.FieldType.FileName,
+                "HYPERLINK" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Hyperlink,
+                "BOOKMARK" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Bookmark,
+                "INDEX" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Index,
+                "SEQ" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Seq,
+                "REF" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Ref,
+                "MERGEFIELD" => Nedev.FileConverters.DocxToDoc.Model.FieldType.MergeField,
+                _ => Nedev.FileConverters.DocxToDoc.Model.FieldType.Unknown
+            };
+        }
+
+        private void ParseDocumentProperties(Stream propsStream, Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            using var reader = XmlReader.Create(propsStream, new XmlReaderSettings { IgnoreWhitespace = true });
+            var props = docModel.Properties;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element)
+                {
+                    string localName = reader.LocalName;
+                    string? ns = reader.NamespaceURI;
+
+                    // Core properties namespace: http://purl.org/dc/elements/1.1/ or http://schemas.openxmlformats.org/package/2006/metadata/core-properties
+                    if (localName == "title")
+                    {
+                        props.Title = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "subject")
+                    {
+                        props.Subject = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "creator" || localName == "author")
+                    {
+                        props.Author = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "keywords")
+                    {
+                        props.Keywords = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "description" || localName == "comments")
+                    {
+                        props.Comments = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "created")
+                    {
+                        if (DateTime.TryParse(reader.ReadElementContentAsString(), out DateTime created))
+                        {
+                            props.Created = created;
+                        }
+                    }
+                    else if (localName == "modified")
+                    {
+                        if (DateTime.TryParse(reader.ReadElementContentAsString(), out DateTime modified))
+                        {
+                            props.Modified = modified;
+                        }
+                    }
+                    else if (localName == "lastPrinted")
+                    {
+                        if (DateTime.TryParse(reader.ReadElementContentAsString(), out DateTime printed))
+                        {
+                            props.LastPrinted = printed;
+                        }
+                    }
+                    else if (localName == "revision")
+                    {
+                        if (int.TryParse(reader.ReadElementContentAsString(), out int revision))
+                        {
+                            props.Revision = revision;
+                        }
+                    }
+                    else if (localName == "category")
+                    {
+                        props.Category = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "manager")
+                    {
+                        props.Manager = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "company")
+                    {
+                        props.Company = reader.ReadElementContentAsString();
+                    }
+                    else if (localName == "totalTime")
+                    {
+                        if (int.TryParse(reader.ReadElementContentAsString(), out int totalTime))
+                        {
+                            props.TotalEditingTime = totalTime;
+                        }
+                    }
+                    else if (localName == "pages")
+                    {
+                        if (int.TryParse(reader.ReadElementContentAsString(), out int pages))
+                        {
+                            props.Pages = pages;
+                        }
+                    }
+                    else if (localName == "words")
+                    {
+                        if (int.TryParse(reader.ReadElementContentAsString(), out int words))
+                        {
+                            props.Words = words;
+                        }
+                    }
+                    else if (localName == "characters")
+                    {
+                        if (int.TryParse(reader.ReadElementContentAsString(), out int characters))
+                        {
+                            props.Characters = characters;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void ParseComments(Stream commentsStream, Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            using var reader = XmlReader.Create(commentsStream, new XmlReaderSettings { IgnoreWhitespace = true });
+            Nedev.FileConverters.DocxToDoc.Model.CommentModel? currentComment = null;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element)
+                {
+                    string localName = reader.LocalName;
+
+                    if (localName == "comment")
+                    {
+                        currentComment = new Nedev.FileConverters.DocxToDoc.Model.CommentModel();
+
+                        string? id = reader.GetAttribute("w:id");
+                        if (!string.IsNullOrEmpty(id))
+                            currentComment.Id = id;
+
+                        string? author = reader.GetAttribute("w:author");
+                        if (!string.IsNullOrEmpty(author))
+                            currentComment.Author = author;
+
+                        string? initials = reader.GetAttribute("w:initials");
+                        if (!string.IsNullOrEmpty(initials))
+                            currentComment.Initials = initials;
+
+                        string? dateStr = reader.GetAttribute("w:date");
+                        if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr, out DateTime date))
+                            currentComment.Date = date;
+
+                        string? doneStr = reader.GetAttribute("w:done");
+                        if (!string.IsNullOrEmpty(doneStr))
+                            currentComment.IsDone = doneStr == "1" || doneStr.Equals("true", StringComparison.OrdinalIgnoreCase);
+                    }
+                    else if (localName == "t" && currentComment != null)
+                    {
+                        // Read comment text
+                        string text = reader.ReadElementContentAsString();
+                        currentComment.Text += text;
+                    }
+                }
+                else if (reader.NodeType == XmlNodeType.EndElement)
+                {
+                    if (reader.LocalName == "comment" && currentComment != null)
+                    {
+                        docModel.Comments.Add(currentComment);
+                        currentComment = null;
+                    }
+                }
+            }
         }
 
         protected virtual void Dispose(bool disposing)

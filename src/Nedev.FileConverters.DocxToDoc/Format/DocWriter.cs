@@ -19,6 +19,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             using var tableStream = new MemoryStream();
             using var dataStream = new MemoryStream();
 
+            // Track embedded objects and images
+            var embeddedObjects = new List<(int cp, byte[] data, string contentType)>();
+            int dataStreamOffset = 0;
+
             // 1. Build the text buffer and formatting structures in one pass
             var textBuilder = new StringBuilder();
             var chpxWriter = new ChpxFkpWriter();
@@ -33,6 +37,25 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 int paraStart = currentCp;
                 foreach (var run in para.Runs)
                 {
+                    // Handle images
+                    if (run.Image != null && run.Image.Data != null)
+                    {
+                        // Add a placeholder character for the image
+                        // In MS-DOC, embedded objects use special characters
+                        textBuilder.Append('\x0001'); // Object placeholder
+                        
+                        // Track the image data
+                        embeddedObjects.Add((currentCp, run.Image.Data, run.Image.ContentType));
+                        
+                        // Add CHPX with sprmCFSpec = 1 (special character)
+                        List<byte> imageSprms = new List<byte>();
+                        imageSprms.Add(0x55); imageSprms.Add(0x08); imageSprms.Add(1); // sprmCFSpec
+                        chpxWriter.AddRun(currentCp, currentCp + 1, imageSprms.ToArray());
+                        
+                        currentCp += 1;
+                        continue;
+                    }
+
                     if (run.Text.Length == 0) continue;
                     
                     // Build Runs
@@ -205,6 +228,71 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             WriteLfo(tableWriter, model);
             int lcbPlfLfo = (int)tableStream.Position - fcPlfLfo;
 
+            // 8.5. Write embedded objects/images to Data stream
+            int fcData = 0;
+            int lcbData = 0;
+            if (embeddedObjects.Count > 0)
+            {
+                fcData = (int)dataStream.Position;
+                using var dataWriter = new BinaryWriter(dataStream, System.Text.Encoding.GetEncoding(1252), leaveOpen: true);
+                
+                foreach (var (cp, data, contentType) in embeddedObjects)
+                {
+                    // Write object header (simplified)
+                    // In a full implementation, this would be a proper OLE object header
+                    dataWriter.Write(data.Length); // Size
+                    dataWriter.Write(data); // Data
+                }
+                
+                lcbData = (int)dataStream.Position - fcData;
+            }
+
+            // 8.6. Write Bookmarks (PlcfBkmkf and PlcfBkmkl)
+            int fcPlcfBkmkf = 0;
+            int lcbPlcfBkmkf = 0;
+            int fcPlcfBkmkl = 0;
+            int lcbPlcfBkmkl = 0;
+            int fcSttbfbkmk = 0;
+            int lcbSttbfbkmk = 0;
+
+            if (model.Bookmarks.Count > 0)
+            {
+                // Write bookmark names (STTBF)
+                fcSttbfbkmk = (int)tableStream.Position;
+                tableWriter.Write((ushort)0xFFFF); // fExtend
+                tableWriter.Write((ushort)model.Bookmarks.Count);
+                tableWriter.Write((ushort)0); // cbExtra
+
+                foreach (var bookmark in model.Bookmarks)
+                {
+                    // Write bookmark name as null-terminated Unicode string
+                    byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(bookmark.Name + "\0");
+                    tableWriter.Write((ushort)bookmark.Name.Length);
+                    tableWriter.Write(nameBytes);
+                }
+                lcbSttbfbkmk = (int)tableStream.Position - fcSttbfbkmk;
+
+                // Write PlcfBkmkf (bookmark first CPs)
+                fcPlcfBkmkf = (int)tableStream.Position;
+                foreach (var bookmark in model.Bookmarks)
+                {
+                    tableWriter.Write(bookmark.StartCp);
+                }
+                // Add terminator
+                tableWriter.Write(currentCp);
+                lcbPlcfBkmkf = (int)tableStream.Position - fcPlcfBkmkf;
+
+                // Write PlcfBkmkl (bookmark last CPs)
+                fcPlcfBkmkl = (int)tableStream.Position;
+                foreach (var bookmark in model.Bookmarks)
+                {
+                    tableWriter.Write(bookmark.EndCp);
+                }
+                // Add terminator
+                tableWriter.Write(currentCp);
+                lcbPlcfBkmkl = (int)tableStream.Position - fcPlcfBkmkl;
+            }
+
             // 9. Process section properties: Build Plcfsed and SED/SEP
             var sections = model.Sections.Count > 0 ? model.Sections : new List<SectionModel> { new SectionModel() };
             
@@ -271,6 +359,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbSttbLst = lcbSttbLst,
                 fcPlfLfo = fcPlfLfo,
                 lcbPlfLfo = lcbPlfLfo,
+                fcData = fcData,
+                lcbData = lcbData,
+                fcPlcfBkmkf = fcPlcfBkmkf,
+                lcbPlcfBkmkf = lcbPlcfBkmkf,
+                fcPlcfBkmkl = fcPlcfBkmkl,
+                lcbPlcfBkmkl = lcbPlcfBkmkl,
+                fcSttbfbkmk = fcSttbfbkmk,
+                lcbSttbfbkmk = lcbSttbfbkmk,
                 ccpText = currentCp
             };
             fib.WriteTo(new BinaryWriter(wordDocumentStream, System.Text.Encoding.GetEncoding(1252), leaveOpen: true));
