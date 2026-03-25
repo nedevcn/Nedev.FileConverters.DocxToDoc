@@ -128,6 +128,8 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public List<TableRowModel> Rows { get; } = new List<TableRowModel>();
         public List<int> GridColumnWidths { get; } = new List<int>();
         public int CellSpacingTwips { get; set; }
+        public int DefaultInsideHorizontalBorderTwips { get; set; }
+        public int DefaultInsideVerticalBorderTwips { get; set; }
         public int DefaultBorderLeftTwips { get; set; }
         public int DefaultBorderRightTwips { get; set; }
         public int DefaultBorderTopTwips { get; set; }

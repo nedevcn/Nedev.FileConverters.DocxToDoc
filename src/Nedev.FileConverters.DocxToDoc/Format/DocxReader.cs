@@ -212,6 +212,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         insideCellBorders = true;
                     }
+                    else if (localName == "insideH" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(xmlReader, out int insideHorizontalBorderTwips))
+                    {
+                        currentTable.DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips;
+                    }
+                    else if (localName == "insideV" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(xmlReader, out int insideVerticalBorderTwips))
+                    {
+                        currentTable.DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips;
+                    }
                     else if ((localName == "left" || localName == "start") && TryReadBorderWidthTwips(xmlReader, out int leftBorderTwips))
                     {
                         if (insideCellBorders && currentCell != null)

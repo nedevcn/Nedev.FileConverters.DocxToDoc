@@ -546,6 +546,43 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(topWithExactHeight > topWithoutExactHeight);
         }
 
+        [Fact]
+        public void WriteDocBlocks_TableInsideVerticalBorder_ReducesLaterCellWidth()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutInsideV = GetSecondCellImageTopWithInsideVerticalBorder(0, pngBytes);
+            int topWithInsideV = GetSecondCellImageTopWithInsideVerticalBorder(360, pngBytes);
+
+            Assert.True(topWithInsideV > topWithoutInsideV);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableInsideHorizontalBorder_ShiftsLaterRowAndFollowingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutInsideH = GetSecondRowImageTopWithInsideHorizontalBorder(0, pngBytes);
+            int topWithInsideH = GetSecondRowImageTopWithInsideHorizontalBorder(240, pngBytes);
+            int afterTableWithoutInsideH = GetAfterTableImageTopWithInsideHorizontalBorder(0, pngBytes);
+            int afterTableWithInsideH = GetAfterTableImageTopWithInsideHorizontalBorder(240, pngBytes);
+
+            Assert.True(topWithInsideH > topWithoutInsideH);
+            Assert.True(afterTableWithInsideH > afterTableWithoutInsideH);
+        }
+
         private static int GetSecondCellImageTop(bool useExplicitWidth, bool addPadding, byte[] pngBytes)
         {
             var model = new DocumentModel();
@@ -807,6 +844,74 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
+        private static int GetSecondCellImageTopWithInsideVerticalBorder(int insideVerticalBorderTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips };
+            table.GridColumnWidths.Add(2600);
+            table.GridColumnWidths.Add(2600);
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2600 };
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Leading cell" } } });
+
+            var secondCell = new TableCellModel { Width = 2600 };
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph is long enough to wrap differently when an inside vertical border reduces the second cell width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
         private static int GetCellSpacingImageTop(int cellSpacingTwips, byte[] pngBytes)
         {
             var model = new DocumentModel();
@@ -894,6 +999,135 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             row.Cells.Add(cell);
             table.Rows.Add(row);
+            model.Content.Add(table);
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "After table" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetSecondRowImageTopWithInsideHorizontalBorder(int insideHorizontalBorderTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips };
+
+            var firstRow = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2600 };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs = { new RunModel { Text = "Row 1" } }
+            });
+            firstRow.Cells.Add(firstCell);
+
+            var secondRow = new TableRowModel();
+            var secondCell = new TableCellModel { Width = 2600 };
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+            secondRow.Cells.Add(secondCell);
+
+            table.Rows.Add(firstRow);
+            table.Rows.Add(secondRow);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAfterTableImageTopWithInsideHorizontalBorder(int insideHorizontalBorderTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips };
+
+            var firstRow = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2600 };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This first row produces visible row advance before the second row.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            firstRow.Cells.Add(firstCell);
+
+            var secondRow = new TableRowModel();
+            var secondCell = new TableCellModel { Width = 2600 };
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs = { new RunModel { Text = "Row 2" } }
+            });
+            secondRow.Cells.Add(secondCell);
+
+            table.Rows.Add(firstRow);
+            table.Rows.Add(secondRow);
             model.Content.Add(table);
             model.Content.Add(new ParagraphModel
             {
