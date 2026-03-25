@@ -17,7 +17,7 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
                 return 0;
             }
 
-            if (options.ShowHelp || (string.IsNullOrEmpty(options.Input) && !options.BatchMode && !options.AnalyzeMode))
+            if (options.ShowHelp || string.IsNullOrEmpty(options.Input))
             {
                 ShowHelp();
                 return options.ShowHelp ? 0 : 1;
@@ -28,11 +28,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
 
             try
             {
-                if (options.AnalyzeMode)
-                {
-                    return RunAnalysis(options, logger);
-                }
-
                 var converter = new DocxToDocConverter(logger);
 
                 if (options.BatchMode)
@@ -115,7 +110,7 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
                 return 2;
             }
 
-            string searchPattern = options.Recursive ? "*.docx" : "*.docx";
+            string searchPattern = "*.docx";
             var searchOption = options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
 
             var files = Directory.GetFiles(options.Input, searchPattern, searchOption)
@@ -186,46 +181,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
             return failCount > 0 ? 4 : 0;
         }
 
-        private static int RunAnalysis(CliOptions options, ILogger logger)
-        {
-            if (string.IsNullOrEmpty(options.Input))
-            {
-                Console.Error.WriteLine("Error: Input file required for analysis.");
-                return 1;
-            }
-
-            if (!File.Exists(options.Input))
-            {
-                Console.Error.WriteLine($"Error: File not found: {options.Input}");
-                return 2;
-            }
-
-            try
-            {
-                var largeFileConverter = new LargeFileConverter(logger);
-                var info = largeFileConverter.AnalyzeDocument(options.Input);
-
-                Console.WriteLine();
-                Console.WriteLine("Document Analysis");
-                Console.WriteLine(new string('=', 50));
-                Console.WriteLine(info.GetSummary());
-                Console.WriteLine();
-
-                if (info.IsLargeFile)
-                {
-                    Console.WriteLine("Note: This is a large file. Consider using streaming mode for conversion.");
-                }
-
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError("Analysis failed", ex);
-                Console.Error.WriteLine($"Analysis failed: {ex.Message}");
-                return 3;
-            }
-        }
-
         private static void ShowVersion()
         {
             var assembly = System.Reflection.Assembly.GetExecutingAssembly();
@@ -279,11 +234,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
                         }
                         break;
 
-                    case "-a":
-                    case "--analyze":
-                        options.AnalyzeMode = true;
-                        break;
-
                     case "--version":
                         options.ShowVersion = true;
                         break;
@@ -315,7 +265,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
             Console.WriteLine("Usage:");
             Console.WriteLine("  Single file:    dotnet cli.dll <input.docx> [output.doc]");
             Console.WriteLine("  Batch mode:     dotnet cli.dll -b <input-dir> [-o <output-dir>]");
-            Console.WriteLine("  Analyze mode:   dotnet cli.dll -a <input.docx>");
             Console.WriteLine();
             Console.WriteLine("Options:");
             Console.WriteLine("  -h, --help       Show this help message");
@@ -324,7 +273,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
             Console.WriteLine("  -r, --recursive  Process subdirectories recursively");
             Console.WriteLine("  --no-hidden      Exclude hidden files");
             Console.WriteLine("  -o, --output     Specify output file or directory");
-            Console.WriteLine("  -a, --analyze    Analyze document without converting");
             Console.WriteLine("  --version        Show version information");
             Console.WriteLine();
             Console.WriteLine("Features:");
@@ -332,8 +280,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
             Console.WriteLine("  - Supports paragraphs, tables, images, hyperlinks");
             Console.WriteLine("  - Preserves styles, fonts, and formatting");
             Console.WriteLine("  - Handles bookmarks, comments, and fields");
-            Console.WriteLine("  - Memory-efficient streaming for large files");
-            Console.WriteLine("  - Async conversion support");
             Console.WriteLine();
             Console.WriteLine("Examples:");
             Console.WriteLine("  # Convert a single file");
@@ -343,17 +289,12 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
             Console.WriteLine("  # Batch convert with verbose output");
             Console.WriteLine("  dotnet cli.dll -b ./documents -o ./converted -r -v");
             Console.WriteLine();
-            Console.WriteLine("  # Analyze a document");
-            Console.WriteLine("  dotnet cli.dll -a document.docx");
-            Console.WriteLine();
             Console.WriteLine("Exit codes:");
             Console.WriteLine("  0  Success");
             Console.WriteLine("  1  Invalid arguments");
             Console.WriteLine("  2  Input not found");
             Console.WriteLine("  3  Conversion error");
             Console.WriteLine("  4  Partial batch failure");
-            Console.WriteLine();
-            Console.WriteLine("For more information, visit: https://github.com/nedev");
         }
     }
 
@@ -365,7 +306,6 @@ namespace Nedev.FileConverters.DocxToDoc.Cli
         public bool ShowVersion { get; set; }
         public bool Verbose { get; set; }
         public bool BatchMode { get; set; }
-        public bool AnalyzeMode { get; set; }
         public bool Recursive { get; set; }
         public bool ExcludeHidden { get; set; }
     }
