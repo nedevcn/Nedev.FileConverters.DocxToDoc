@@ -754,6 +754,23 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_PreservesGridFallbackWidthBeforeShrinkingExplicitNeighbors()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithGridFallbackSecondCell = GetOverflowingMixedGridFallbackImageTop(secondCellUsesGridFallback: true, preferredWidthTwips: 4500, pngBytes);
+            int topWithExplicitSecondCell = GetOverflowingMixedGridFallbackImageTop(secondCellUsesGridFallback: false, preferredWidthTwips: 4500, pngBytes);
+
+            Assert.True(topWithGridFallbackSecondCell < topWithExplicitSecondCell);
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableRowHeightExact_ClipsOverflowingCellContentForLaterParagraphs()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1956,6 +1973,85 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var tableData = tableStream.GetData();
             int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
             int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetOverflowingMixedGridFallbackImageTop(bool secondCellUsesGridFallback, int preferredWidthTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthTwips, PreferredWidthUnit = TableWidthUnit.Dxa };
+            table.GridColumnWidths.Add(2500);
+            table.GridColumnWidths.Add(2000);
+            table.GridColumnWidths.Add(0);
+
+            var row = new TableRowModel();
+
+            var firstCell = new TableCellModel { Width = 2500 };
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Fixed 1" } } });
+
+            var secondCell = secondCellUsesGridFallback
+                ? new TableCellModel()
+                : new TableCellModel { Width = 2000 };
+
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This cell should keep the grid fallback width when a later auto cell reserves minimum width and an explicit neighbor must shrink first.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var thirdCell = new TableCellModel();
+            thirdCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Auto tail" } } });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            row.Cells.Add(thirdCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+
+            int imageIndex = secondCellUsesGridFallback ? 0 : 0;
+            int recordOffset = fcPlcfspaMom + 8 + (imageIndex * 26);
 
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }

@@ -1490,6 +1490,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             var widthsTwips = new List<int>(row.Cells.Count);
             var spans = new List<int>(row.Cells.Count);
+            var isExplicitResolvedWidth = new List<bool>(row.Cells.Count);
             var minimumAutoWidthsTwips = new List<int>(row.Cells.Count);
             int gridColumnIndex = 0;
             int resolvedWidthSumTwips = 0;
@@ -1499,7 +1500,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             foreach (var cell in row.Cells)
             {
                 int span = Math.Max(1, cell.GridSpan);
-                int widthTwips = ResolveExplicitCellWidthTwips(cell, targetTableWidthTwips);
+                int explicitWidthTwips = ResolveExplicitCellWidthTwips(cell, targetTableWidthTwips);
+                int widthTwips = explicitWidthTwips;
+                bool resolvedFromExplicitWidth = explicitWidthTwips > 0;
                 if (widthTwips <= 0 && table.GridColumnWidths.Count > 0)
                 {
                     widthTwips = ResolveTableCellWidth(table, gridColumnIndex, span, 0);
@@ -1507,6 +1510,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                 widthsTwips.Add(Math.Max(0, widthTwips));
                 spans.Add(span);
+                isExplicitResolvedWidth.Add(resolvedFromExplicitWidth);
                 minimumAutoWidthsTwips.Add(Math.Max(720, 720 * span));
 
                 if (widthTwips > 0)
@@ -1536,7 +1540,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (resolvedWidthSumTwips > 0 && targetTableWidthTwips > 0 && resolvedWidthSumTwips + reservedMinimumAutoWidthTwips > targetTableWidthTwips)
                 {
                     int availableResolvedWidthTwips = Math.Max(unresolvedCellCount, targetTableWidthTwips - reservedMinimumAutoWidthTwips);
-                    ScaleResolvedWidthsToTarget(widthsTwips, availableResolvedWidthTwips);
+                    if (!ScaleExplicitWidthsToTarget(widthsTwips, isExplicitResolvedWidth, availableResolvedWidthTwips))
+                    {
+                        ScaleResolvedWidthsToTarget(widthsTwips, availableResolvedWidthTwips);
+                    }
+
                     resolvedWidthSumTwips = 0;
                     foreach (int widthTwips in widthsTwips)
                     {
@@ -1578,6 +1586,51 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return widthsTwips;
         }
 
+        private static bool ScaleExplicitWidthsToTarget(List<int> widthsTwips, List<bool> isExplicitResolvedWidth, int targetResolvedWidthTwips)
+        {
+            if (targetResolvedWidthTwips <= 0 || widthsTwips.Count != isExplicitResolvedWidth.Count)
+            {
+                return false;
+            }
+
+            int fixedResolvedWidthTwips = 0;
+            int explicitResolvedWidthTwips = 0;
+            int explicitResolvedCount = 0;
+            for (int index = 0; index < widthsTwips.Count; index++)
+            {
+                int widthTwips = Math.Max(0, widthsTwips[index]);
+                if (widthTwips == 0)
+                {
+                    continue;
+                }
+
+                if (isExplicitResolvedWidth[index])
+                {
+                    explicitResolvedWidthTwips += widthTwips;
+                    explicitResolvedCount += 1;
+                }
+                else
+                {
+                    fixedResolvedWidthTwips += widthTwips;
+                }
+            }
+
+            if (explicitResolvedWidthTwips <= 0)
+            {
+                return false;
+            }
+
+            int targetExplicitWidthTwips = targetResolvedWidthTwips - fixedResolvedWidthTwips;
+            if (targetExplicitWidthTwips <= 0 || targetExplicitWidthTwips >= explicitResolvedWidthTwips)
+            {
+                return false;
+            }
+
+            targetExplicitWidthTwips = Math.Max(explicitResolvedCount, targetExplicitWidthTwips);
+            ScaleSelectedWidthsToTarget(widthsTwips, isExplicitResolvedWidth, targetExplicitWidthTwips);
+            return true;
+        }
+
         private static void ScaleResolvedWidthsToTarget(List<int> widthsTwips, int targetResolvedWidthTwips)
         {
             if (targetResolvedWidthTwips <= 0)
@@ -1617,6 +1670,48 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             if (lastResolvedIndex >= 0 && scaledResolvedTotalTwips != targetResolvedWidthTwips)
             {
                 widthsTwips[lastResolvedIndex] = Math.Max(1, widthsTwips[lastResolvedIndex] + (targetResolvedWidthTwips - scaledResolvedTotalTwips));
+            }
+        }
+
+        private static void ScaleSelectedWidthsToTarget(List<int> widthsTwips, List<bool> selectedWidths, int targetSelectedWidthTwips)
+        {
+            if (targetSelectedWidthTwips <= 0 || widthsTwips.Count != selectedWidths.Count)
+            {
+                return;
+            }
+
+            int currentSelectedWidthTwips = 0;
+            foreach (var pair in widthsTwips.Select((widthTwips, index) => (widthTwips, index)))
+            {
+                if (selectedWidths[pair.index] && pair.widthTwips > 0)
+                {
+                    currentSelectedWidthTwips += pair.widthTwips;
+                }
+            }
+
+            if (currentSelectedWidthTwips <= 0 || currentSelectedWidthTwips == targetSelectedWidthTwips)
+            {
+                return;
+            }
+
+            int scaledSelectedTotalTwips = 0;
+            int lastSelectedIndex = -1;
+            for (int index = 0; index < widthsTwips.Count; index++)
+            {
+                if (!selectedWidths[index] || widthsTwips[index] <= 0)
+                {
+                    continue;
+                }
+
+                lastSelectedIndex = index;
+                int scaledWidthTwips = Math.Max(1, (int)Math.Round(widthsTwips[index] * (targetSelectedWidthTwips / (double)currentSelectedWidthTwips), MidpointRounding.AwayFromZero));
+                widthsTwips[index] = scaledWidthTwips;
+                scaledSelectedTotalTwips += scaledWidthTwips;
+            }
+
+            if (lastSelectedIndex >= 0 && scaledSelectedTotalTwips != targetSelectedWidthTwips)
+            {
+                widthsTwips[lastSelectedIndex] = Math.Max(1, widthsTwips[lastSelectedIndex] + (targetSelectedWidthTwips - scaledSelectedTotalTwips));
             }
         }
 
