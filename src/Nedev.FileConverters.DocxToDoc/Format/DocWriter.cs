@@ -430,23 +430,46 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         int rowStart = currentCp;
                         int rowHeightTwips = 0;
                         int rowGridColumnIndex = 0;
+                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int verticalOffsetTwips)>();
                         foreach (var cell in row.Cells)
                         {
-                            int cellVerticalCursorTwips = 0;
                             int resolvedCellWidthTwips = cell.Width > 0
                                 ? cell.Width
                                 : ResolveTableCellWidth(table, rowGridColumnIndex, cell.GridSpan, documentAvailableWidthTwips);
                             int effectiveCellWidthTwips = resolvedCellWidthTwips > 0 ? resolvedCellWidthTwips : documentAvailableWidthTwips;
+                            int topBorderTwips = ResolveTableCellTopBorderTwips(table, cell);
+                            int bottomBorderTwips = ResolveTableCellBottomBorderTwips(table, cell);
+                            int topPaddingTwips = ResolveTableCellTopPaddingTwips(table, cell);
+                            int bottomPaddingTwips = ResolveTableCellBottomPaddingTwips(table, cell);
+                            int topCellSpacingTwips = ResolveTableCellTopSpacingTwips(table);
+                            int bottomCellSpacingTwips = ResolveTableCellBottomSpacingTwips(table);
+                            int horizontalCellBorderTwips = ResolveTableCellHorizontalBorderTwips(table, cell);
                             int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
-                            int cellAvailableWidthTwips = Math.Max(720, effectiveCellWidthTwips - horizontalCellPaddingTwips);
-                            foreach (var cellPara in cell.Paragraphs)
-                            {
-                                ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellAvailableWidthTwips);
-                            }
-
+                            int horizontalCellSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
+                            int cellAvailableWidthTwips = Math.Max(720, effectiveCellWidthTwips - horizontalCellBorderTwips - horizontalCellPaddingTwips - horizontalCellSpacingTwips);
+                            int cellContentHeightTwips = EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips);
+                            int cellTotalHeightTwips = topCellSpacingTwips + topBorderTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips;
                             rowGridColumnIndex += Math.Max(1, cell.GridSpan);
+                            rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
+                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topCellSpacingTwips + topBorderTwips + topPaddingTwips, 0));
+                        }
 
-                            rowHeightTwips = Math.Max(rowHeightTwips, cellVerticalCursorTwips);
+                        rowHeightTwips = ResolveRowHeightTwips(row, rowHeightTwips);
+
+                        for (int cellIndex = 0; cellIndex < cellLayouts.Count; cellIndex++)
+                        {
+                            var cellLayout = cellLayouts[cellIndex];
+                            int verticalOffsetTwips = ResolveTableCellVerticalAlignmentOffset(cellLayout.cell, rowHeightTwips, cellLayout.totalHeightTwips);
+                            cellLayouts[cellIndex] = (cellLayout.cell, cellLayout.availableWidthTwips, cellLayout.totalHeightTwips, cellLayout.topOffsetTwips, verticalOffsetTwips);
+                        }
+
+                        foreach (var cellLayout in cellLayouts)
+                        {
+                            int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
+                            foreach (var cellPara in cellLayout.cell.Paragraphs)
+                            {
+                                ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips);
+                            }
 
                             // Cell Mark - treated as a paragraph terminator in MS-DOC
                             int cellMarkStart = currentCp;
@@ -1373,25 +1396,137 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return Math.Max(0, leftPaddingTwips) + Math.Max(0, rightPaddingTwips);
         }
 
+        private static int ResolveTableCellHorizontalBorderTwips(TableModel table, TableCellModel cell)
+        {
+            int leftBorderTwips = cell.BorderLeftTwips > 0 ? cell.BorderLeftTwips : table.DefaultBorderLeftTwips;
+            int rightBorderTwips = cell.BorderRightTwips > 0 ? cell.BorderRightTwips : table.DefaultBorderRightTwips;
+            return Math.Max(0, leftBorderTwips) + Math.Max(0, rightBorderTwips);
+        }
+
+        private static int ResolveTableCellHorizontalSpacingTwips(TableModel table)
+        {
+            return Math.Max(0, table.CellSpacingTwips);
+        }
+
+        private static int ResolveTableCellTopSpacingTwips(TableModel table)
+        {
+            return Math.Max(0, table.CellSpacingTwips / 2);
+        }
+
+        private static int ResolveTableCellBottomSpacingTwips(TableModel table)
+        {
+            int spacingTwips = Math.Max(0, table.CellSpacingTwips);
+            return spacingTwips - (spacingTwips / 2);
+        }
+
+        private static int ResolveTableCellTopPaddingTwips(TableModel table, TableCellModel cell)
+        {
+            return Math.Max(0, cell.PaddingTopTwips > 0 ? cell.PaddingTopTwips : table.DefaultCellPaddingTopTwips);
+        }
+
+        private static int ResolveTableCellBottomPaddingTwips(TableModel table, TableCellModel cell)
+        {
+            return Math.Max(0, cell.PaddingBottomTwips > 0 ? cell.PaddingBottomTwips : table.DefaultCellPaddingBottomTwips);
+        }
+
+        private static int ResolveTableCellTopBorderTwips(TableModel table, TableCellModel cell)
+        {
+            return Math.Max(0, cell.BorderTopTwips > 0 ? cell.BorderTopTwips : table.DefaultBorderTopTwips);
+        }
+
+        private static int ResolveTableCellBottomBorderTwips(TableModel table, TableCellModel cell)
+        {
+            return Math.Max(0, cell.BorderBottomTwips > 0 ? cell.BorderBottomTwips : table.DefaultBorderBottomTwips);
+        }
+
+        private static int ResolveTableCellVerticalAlignmentOffset(TableCellModel cell, int rowHeightTwips, int cellTotalHeightTwips)
+        {
+            int remainingHeightTwips = Math.Max(0, rowHeightTwips - cellTotalHeightTwips);
+            return cell.VerticalAlignment switch
+            {
+                TableCellVerticalAlignment.Center => remainingHeightTwips / 2,
+                TableCellVerticalAlignment.Bottom => remainingHeightTwips,
+                _ => 0
+            };
+        }
+
+        private static int ResolveRowHeightTwips(TableRowModel row, int contentHeightTwips)
+        {
+            if (row.HeightTwips <= 0)
+            {
+                return contentHeightTwips;
+            }
+
+            return row.HeightRule switch
+            {
+                TableRowHeightRule.Exact => Math.Max(0, row.HeightTwips),
+                TableRowHeightRule.AtLeast => Math.Max(contentHeightTwips, row.HeightTwips),
+                _ => contentHeightTwips
+            };
+        }
+
+        private static int EstimateTableCellContentHeightTwips(TableCellModel cell, int cellAvailableWidthTwips)
+        {
+            int contentHeightTwips = 0;
+            foreach (var paragraph in cell.Paragraphs)
+            {
+                int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellAvailableWidthTwips);
+                int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
+                contentHeightTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
+            }
+
+            return contentHeightTwips;
+        }
+
         private static int EstimateParagraphLineCount(ParagraphModel paragraph, int maxFontSizeHalfPoints, int availableWidthTwips)
         {
-            int textLength = 0;
+            int estimatedTextWidthTwips = 0;
             foreach (var run in paragraph.Runs)
             {
                 if (!string.IsNullOrEmpty(run.Text))
                 {
-                    textLength += run.Text.Length;
+                    estimatedTextWidthTwips += EstimateRunTextWidthTwips(run, maxFontSizeHalfPoints);
                 }
             }
 
-            if (textLength <= 0 || availableWidthTwips <= 0)
+            if (estimatedTextWidthTwips <= 0 || availableWidthTwips <= 0)
             {
                 return 1;
             }
 
-            int averageCharacterWidthTwips = Math.Max(60, (maxFontSizeHalfPoints * 11 + 1) / 2);
-            int charactersPerLine = Math.Max(1, availableWidthTwips / averageCharacterWidthTwips);
-            return Math.Max(1, (textLength + charactersPerLine - 1) / charactersPerLine);
+            return Math.Max(1, (estimatedTextWidthTwips + availableWidthTwips - 1) / availableWidthTwips);
+        }
+
+        private static int EstimateRunTextWidthTwips(RunModel run, int fallbackFontSizeHalfPoints)
+        {
+            int fontSizeHalfPoints = run.Properties.FontSize.GetValueOrDefault(fallbackFontSizeHalfPoints);
+            int fontSizeTwips = Math.Max(120, fontSizeHalfPoints * 10);
+            int widthTwips = 0;
+
+            foreach (char character in run.Text)
+            {
+                widthTwips += EstimateCharacterWidthTwips(character, fontSizeTwips);
+            }
+
+            return widthTwips;
+        }
+
+        private static int EstimateCharacterWidthTwips(char character, int fontSizeTwips)
+        {
+            double widthFactor = character switch
+            {
+                ' ' or '\t' => 0.35d,
+                '.' or ',' or ';' or ':' or '!' or '|' or '\'' or '"' => 0.28d,
+                'i' or 'l' or 'I' or 'j' => 0.30d,
+                'f' or 't' or 'r' => 0.38d,
+                'm' or 'w' or 'M' or 'W' => 0.82d,
+                _ when char.IsUpper(character) => 0.68d,
+                _ when char.IsDigit(character) => 0.56d,
+                _ when character >= 0x2E80 => 1.0d,
+                _ => 0.56d
+            };
+
+            return Math.Max(40, (int)Math.Round(fontSizeTwips * widthFactor, MidpointRounding.AwayFromZero));
         }
 
         private static int EstimateParagraphAdvanceTwips(ParagraphModel paragraph, int paragraphContentHeightTwips)

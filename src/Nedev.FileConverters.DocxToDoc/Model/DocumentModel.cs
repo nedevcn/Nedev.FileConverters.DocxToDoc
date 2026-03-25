@@ -127,13 +127,29 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     {
         public List<TableRowModel> Rows { get; } = new List<TableRowModel>();
         public List<int> GridColumnWidths { get; } = new List<int>();
+        public int CellSpacingTwips { get; set; }
+        public int DefaultBorderLeftTwips { get; set; }
+        public int DefaultBorderRightTwips { get; set; }
+        public int DefaultBorderTopTwips { get; set; }
+        public int DefaultBorderBottomTwips { get; set; }
         public int DefaultCellPaddingLeftTwips { get; set; }
         public int DefaultCellPaddingRightTwips { get; set; }
+        public int DefaultCellPaddingTopTwips { get; set; }
+        public int DefaultCellPaddingBottomTwips { get; set; }
     }
 
     public class TableRowModel
     {
         public List<TableCellModel> Cells { get; } = new List<TableCellModel>();
+        public int HeightTwips { get; set; }
+        public TableRowHeightRule HeightRule { get; set; } = TableRowHeightRule.Auto;
+    }
+
+    public enum TableRowHeightRule
+    {
+        Auto = 0,
+        AtLeast = 1,
+        Exact = 2
     }
 
     public class TableCellModel
@@ -141,8 +157,22 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public List<ParagraphModel> Paragraphs { get; } = new List<ParagraphModel>();
         public int Width { get; set; }
         public int GridSpan { get; set; } = 1;
+        public TableCellVerticalAlignment VerticalAlignment { get; set; } = TableCellVerticalAlignment.Top;
+        public int BorderLeftTwips { get; set; }
+        public int BorderRightTwips { get; set; }
+        public int BorderTopTwips { get; set; }
+        public int BorderBottomTwips { get; set; }
         public int PaddingLeftTwips { get; set; }
         public int PaddingRightTwips { get; set; }
+        public int PaddingTopTwips { get; set; }
+        public int PaddingBottomTwips { get; set; }
+    }
+
+    public enum TableCellVerticalAlignment
+    {
+        Top = 0,
+        Center = 1,
+        Bottom = 2
     }
 
     public class ParagraphModel

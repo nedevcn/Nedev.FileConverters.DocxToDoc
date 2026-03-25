@@ -435,6 +435,117 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(topWithMargins > topWithoutMargins);
         }
 
+        [Fact]
+        public void WriteDocBlocks_TableCellVerticalPadding_ShiftsFloatingImageTopAndRowAdvance()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutPadding = GetSingleCellImageTop(0, 0, pngBytes);
+            int topWithTopPadding = GetSingleCellImageTop(240, 0, pngBytes);
+            int afterTableWithoutBottomPadding = GetAfterTableImageTop(0, pngBytes);
+            int afterTableWithBottomPadding = GetAfterTableImageTop(360, pngBytes);
+
+            Assert.True(topWithTopPadding > topWithoutPadding);
+            Assert.True(afterTableWithBottomPadding > afterTableWithoutBottomPadding);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellVerticalAlignment_ShiftsFloatingImageWithinTallRow()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithTopAlignment = GetAlignedCellImageTop(TableCellVerticalAlignment.Top, pngBytes);
+            int topWithBottomAlignment = GetAlignedCellImageTop(TableCellVerticalAlignment.Bottom, pngBytes);
+
+            Assert.True(topWithBottomAlignment > topWithTopAlignment);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellSpacing_ReducesAvailableWidthAndAdvancesFollowingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutSpacing = GetCellSpacingImageTop(0, pngBytes);
+            int topWithSpacing = GetCellSpacingImageTop(360, pngBytes);
+            int afterTableWithoutSpacing = GetAfterTableImageTopWithCellSpacing(0, pngBytes);
+            int afterTableWithSpacing = GetAfterTableImageTopWithCellSpacing(360, pngBytes);
+
+            Assert.True(topWithSpacing > topWithoutSpacing);
+            Assert.True(afterTableWithSpacing > afterTableWithoutSpacing);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellBorders_ReduceAvailableWidthAndAdvanceFollowingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutBorders = GetCellBorderImageTop(0, 0, 0, 0, pngBytes);
+            int topWithBorders = GetCellBorderImageTop(360, 360, 240, 240, pngBytes);
+            int afterTableWithoutBorders = GetAfterTableImageTopWithCellBorder(0, 0, pngBytes);
+            int afterTableWithBorders = GetAfterTableImageTopWithCellBorder(240, 240, pngBytes);
+
+            Assert.True(topWithBorders > topWithoutBorders);
+            Assert.True(afterTableWithBorders > afterTableWithoutBorders);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightAtLeast_AdvancesFollowingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int afterTableAutoHeight = GetAfterTableImageTopWithRowHeight(0, TableRowHeightRule.Auto, pngBytes);
+            int afterTableAtLeastHeight = GetAfterTableImageTopWithRowHeight(1800, TableRowHeightRule.AtLeast, pngBytes);
+
+            Assert.True(afterTableAtLeastHeight > afterTableAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ShiftsBottomAlignedFloatingImage()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutExactHeight = GetAlignedCellImageTopWithRowHeight(0, TableRowHeightRule.Auto, TableCellVerticalAlignment.Bottom, pngBytes);
+            int topWithExactHeight = GetAlignedCellImageTopWithRowHeight(2200, TableRowHeightRule.Exact, TableCellVerticalAlignment.Bottom, pngBytes);
+
+            Assert.True(topWithExactHeight > topWithoutExactHeight);
+        }
+
         private static int GetSecondCellImageTop(bool useExplicitWidth, bool addPadding, byte[] pngBytes)
         {
             var model = new DocumentModel();
@@ -500,6 +611,569 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             row.Cells.Add(firstCell);
             row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetSingleCellImageTop(int topPaddingTwips, int bottomPaddingTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 2600, PaddingTopTwips = topPaddingTwips, PaddingBottomTwips = bottomPaddingTwips };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAfterTableImageTop(int bottomPaddingTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 2600, PaddingBottomTwips = bottomPaddingTwips };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "Cell",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "After table" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAlignedCellImageTop(TableCellVerticalAlignment alignment, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel();
+
+            var tallCell = new TableCellModel { Width = 2600 };
+            tallCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This tall cell contains enough text to produce a clearly taller row height than its neighbor.",
+                        Properties =
+                        {
+                            FontSize = 28
+                        }
+                    }
+                }
+            });
+
+            var alignedCell = new TableCellModel { Width = 2600, VerticalAlignment = alignment };
+            alignedCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(tallCell);
+            row.Cells.Add(alignedCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetCellSpacingImageTop(int cellSpacingTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { CellSpacingTwips = cellSpacingTwips };
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 2600 };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph is long enough to wrap differently when cell spacing reduces the effective width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAfterTableImageTopWithCellSpacing(int cellSpacingTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { CellSpacingTwips = cellSpacingTwips };
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 2600 };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "Cell",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "After table" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetCellBorderImageTop(int leftBorderTwips, int rightBorderTwips, int topBorderTwips, int bottomBorderTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel();
+            var cell = new TableCellModel
+            {
+                Width = 2600,
+                BorderLeftTwips = leftBorderTwips,
+                BorderRightTwips = rightBorderTwips,
+                BorderTopTwips = topBorderTwips,
+                BorderBottomTwips = bottomBorderTwips
+            };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph is long enough to wrap differently when borders reduce the effective width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAfterTableImageTopWithCellBorder(int topBorderTwips, int bottomBorderTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 2600, BorderTopTwips = topBorderTwips, BorderBottomTwips = bottomBorderTwips };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "Cell",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "After table" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAfterTableImageTopWithRowHeight(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+            var cell = new TableCellModel { Width = 2600 };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "Cell",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "After table" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAlignedCellImageTopWithRowHeight(int rowHeightTwips, TableRowHeightRule heightRule, TableCellVerticalAlignment alignment, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+
+            var contentCell = new TableCellModel { Width = 2600 };
+            contentCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This cell stays intentionally short so explicit row height creates remaining vertical space.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+
+            var alignedCell = new TableCellModel { Width = 2600, VerticalAlignment = alignment };
+            alignedCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(contentCell);
+            row.Cells.Add(alignedCell);
             table.Rows.Add(row);
             model.Content.Add(table);
 

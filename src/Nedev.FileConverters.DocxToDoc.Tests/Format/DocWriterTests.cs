@@ -1293,8 +1293,8 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var tableData = tableStream.GetData();
             int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
 
-            Assert.Equal(2538, BitConverter.ToInt32(tableData, fcPlcfspaMom + 16));
-            Assert.Equal(3258, BitConverter.ToInt32(tableData, fcPlcfspaMom + 24));
+            Assert.Equal(2216, BitConverter.ToInt32(tableData, fcPlcfspaMom + 16));
+            Assert.Equal(2936, BitConverter.ToInt32(tableData, fcPlcfspaMom + 24));
         }
 
         [Fact]
@@ -1367,23 +1367,92 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                 return model;
             }
 
-            static int GetParagraphRelativeImageTop(DocumentModel model)
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithLargerRunFonts_UsesGreaterEstimatedParagraphWidthForFloatingImage()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
             {
-                var writer = new DocWriter();
-                using var ms = new MemoryStream();
-                writer.WriteDocBlocks(model, ms);
-                ms.Position = 0;
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
 
-                using var compoundFile = new OpenMcdf.CompoundFile(ms);
-                Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
-                Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+            int topWithSmallFont = GetParagraphRelativeImageTop(BuildFontSensitiveParagraphModel(20, pngBytes));
+            int topWithLargeFont = GetParagraphRelativeImageTop(BuildFontSensitiveParagraphModel(36, pngBytes));
 
-                var wordDocData = wordDocStream.GetData();
-                var tableData = tableStream.GetData();
-                int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            Assert.True(topWithLargeFont > topWithSmallFont);
 
-                return BitConverter.ToInt32(tableData, fcPlcfspaMom + 16);
+            static DocumentModel BuildFontSensitiveParagraphModel(int fontSizeHalfPoints, byte[] imageBytes)
+            {
+                var model = new DocumentModel();
+                model.Sections.Add(new SectionModel
+                {
+                    PageWidth = 5200,
+                    MarginLeft = 1000,
+                    MarginRight = 1000,
+                    MarginTop = 1200,
+                    MarginBottom = 1800
+                });
+
+                model.Content.Add(new ParagraphModel
+                {
+                    Runs =
+                    {
+                        new RunModel
+                        {
+                            Text = "Wide letters WWWW mixed with narrow iiiii should still react to actual run font size.",
+                            Properties =
+                            {
+                                FontSize = fontSizeHalfPoints
+                            }
+                        }
+                    }
+                });
+
+                model.Content.Add(new ParagraphModel
+                {
+                    Runs =
+                    {
+                        new RunModel { Text = "Anchor" },
+                        new RunModel
+                        {
+                            Image = new ImageModel
+                            {
+                                Data = imageBytes,
+                                ContentType = "image/png",
+                                Width = 96,
+                                Height = 48,
+                                LayoutType = ImageLayoutType.Floating,
+                                VerticalRelativeTo = "paragraph",
+                                PositionYTwips = 50
+                            }
+                        }
+                    }
+                });
+
+                return model;
             }
+        }
+
+        private static int GetParagraphRelativeImageTop(DocumentModel model)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+
+            return BitConverter.ToInt32(tableData, fcPlcfspaMom + 16);
         }
 
         [Fact]

@@ -116,7 +116,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int currentRowGridColumnIndex = 0;
             bool insideTableCellMargins = false;
             bool insideCellMargins = false;
-                var openFields = new Stack<Nedev.FileConverters.DocxToDoc.Model.FieldModel>();
+            bool insideTableBorders = false;
+            bool insideCellBorders = false;
+            var openFields = new Stack<Nedev.FileConverters.DocxToDoc.Model.FieldModel>();
 
             while (xmlReader.Read())
             {
@@ -139,6 +141,21 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         currentCell = new Nedev.FileConverters.DocxToDoc.Model.TableCellModel();
                         currentRow.Cells.Add(currentCell);
                     }
+                    else if (localName == "trHeight" && currentRow != null)
+                    {
+                        if (int.TryParse(xmlReader.GetAttribute("w:val"), out int rowHeightTwips))
+                        {
+                            currentRow.HeightTwips = rowHeightTwips;
+                        }
+
+                        string? heightRule = xmlReader.GetAttribute("w:hRule");
+                        currentRow.HeightRule = heightRule switch
+                        {
+                            "exact" => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.Exact,
+                            "atLeast" => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.AtLeast,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.Auto
+                        };
+                    }
                     else if (localName == "tcW" && currentCell != null)
                     {
                         string? type = xmlReader.GetAttribute("w:type");
@@ -155,6 +172,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentTable.GridColumnWidths.Add(gridWidth);
                         }
                     }
+                    else if (localName == "tblCellSpacing" && currentTable != null && currentCell == null)
+                    {
+                        if (TryReadDxaWidth(xmlReader, out int cellSpacingTwips))
+                        {
+                            currentTable.CellSpacingTwips = cellSpacingTwips;
+                        }
+                    }
                     else if (localName == "gridSpan" && currentCell != null)
                     {
                         if (int.TryParse(xmlReader.GetAttribute("w:val"), out int gridSpan) && gridSpan > 0)
@@ -162,13 +186,75 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentCell.GridSpan = gridSpan;
                         }
                     }
+                    else if (localName == "vAlign" && currentCell != null)
+                    {
+                        string? value = xmlReader.GetAttribute("w:val");
+                        currentCell.VerticalAlignment = value switch
+                        {
+                            "center" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Center,
+                            "bottom" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Bottom,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Top
+                        };
+                    }
                     else if (localName == "tblCellMar" && currentTable != null && currentCell == null)
                     {
                         insideTableCellMargins = true;
                     }
+                    else if (localName == "tblBorders" && currentTable != null && currentCell == null)
+                    {
+                        insideTableBorders = true;
+                    }
                     else if (localName == "tcMar" && currentCell != null)
                     {
                         insideCellMargins = true;
+                    }
+                    else if (localName == "tcBorders" && currentCell != null)
+                    {
+                        insideCellBorders = true;
+                    }
+                    else if ((localName == "left" || localName == "start") && TryReadBorderWidthTwips(xmlReader, out int leftBorderTwips))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.BorderLeftTwips = leftBorderTwips;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderLeftTwips = leftBorderTwips;
+                        }
+                    }
+                    else if ((localName == "right" || localName == "end") && TryReadBorderWidthTwips(xmlReader, out int rightBorderTwips))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.BorderRightTwips = rightBorderTwips;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderRightTwips = rightBorderTwips;
+                        }
+                    }
+                    else if (localName == "top" && TryReadBorderWidthTwips(xmlReader, out int topBorderTwips))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.BorderTopTwips = topBorderTwips;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderTopTwips = topBorderTwips;
+                        }
+                    }
+                    else if (localName == "bottom" && TryReadBorderWidthTwips(xmlReader, out int bottomBorderTwips))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.BorderBottomTwips = bottomBorderTwips;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderBottomTwips = bottomBorderTwips;
+                        }
                     }
                     else if ((localName == "left" || localName == "start") && TryReadDxaWidth(xmlReader, out int leftPaddingTwips))
                     {
@@ -190,6 +276,28 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         else if (insideTableCellMargins && currentTable != null)
                         {
                             currentTable.DefaultCellPaddingRightTwips = rightPaddingTwips;
+                        }
+                    }
+                    else if (localName == "top" && TryReadDxaWidth(xmlReader, out int topPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.PaddingTopTwips = topPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingTopTwips = topPaddingTwips;
+                        }
+                    }
+                    else if (localName == "bottom" && TryReadDxaWidth(xmlReader, out int bottomPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.PaddingBottomTwips = bottomPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingBottomTwips = bottomPaddingTwips;
                         }
                     }
                     else if (localName == "p")
@@ -539,9 +647,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         insideTableCellMargins = false;
                     }
+                    else if (localName == "tblBorders")
+                    {
+                        insideTableBorders = false;
+                    }
                     else if (localName == "tcMar")
                     {
                         insideCellMargins = false;
+                    }
+                    else if (localName == "tcBorders")
+                    {
+                        insideCellBorders = false;
                     }
                     else if (localName == "p")
                     {
@@ -594,6 +710,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             return int.TryParse(xmlReader.GetAttribute("w:w"), out width);
+        }
+
+        private static bool TryReadBorderWidthTwips(XmlReader xmlReader, out int width)
+        {
+            string? borderValue = xmlReader.GetAttribute("w:val");
+            if (string.Equals(borderValue, "nil", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(borderValue, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                width = 0;
+                return true;
+            }
+
+            if (!int.TryParse(xmlReader.GetAttribute("w:sz"), out int eighthPointWidth))
+            {
+                width = 0;
+                return false;
+            }
+
+            width = (int)Math.Round(Math.Max(0, eighthPointWidth) * 2.5d, MidpointRounding.AwayFromZero);
+            return true;
         }
 
         private void ParseBookmarks(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)

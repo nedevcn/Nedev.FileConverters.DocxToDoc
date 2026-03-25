@@ -22,20 +22,26 @@ The implementation is no longer limited to plain text and basic formatting. In t
 - anchored/floating image geometry with page, margin, and paragraph-relative positioning heuristics
 - table rows, cell markers, row markers, and TAPX output
 - table width inference from `tcW`, `tblGrid/gridCol`, `gridSpan`, and cell padding-aware width reduction for layout heuristics
+- table cell top/bottom padding-aware vertical layout heuristics for row height and paragraph-relative floating content
+- table border thickness heuristics from `tblBorders` and `tcBorders` affecting effective cell width and row advance
+- table row height heuristics from `trHeight` / `hRule` affecting minimum/exact row advance and in-row vertical alignment offsets
+- table cell vertical alignment (`top`/`center`/`bottom`) heuristics inside tall rows
+- table cell spacing (`tblCellSpacing`) heuristics affecting effective cell width and row advance
+- run-aware paragraph width estimation that uses per-run font size and a character-width heuristic instead of only raw character count
 
-Current local validation status: `104/104` tests passing.
+Current local validation status: `117/117` tests passing.
 
 ## Feature Coverage
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Paragraphs and runs | ✅ Implemented | Text, basic run formatting, line/paragraph spacing, and indent are serialized. |
+| Paragraphs and runs | ✅ Implemented | Text, basic run formatting, line/paragraph spacing, indent, and run-aware width heuristics are serialized/applied. |
 | Styles and fonts | ✅ Implemented | Style sheet and font table emission are present. |
 | Sections | ✅ Implemented | Page size, margins, and page-number start metadata are supported. |
 | Numbering and lists | ✅ Implemented | Abstract numbering and LFO/LST structures are emitted. |
 | Fields and hyperlinks | ✅ Implemented | Field boundaries, nested fields, and hyperlink instructions are emitted. |
 | Images | ✅ Implemented with heuristics | Inline and floating images are written via DOC picture blocks and OfficeArt records. |
-| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW`, `tblGrid`, `gridSpan`, and cell padding, but is not a full Word layout engine. |
+| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW`, `tblGrid`, `gridSpan`, cell padding, border thickness, row height hints, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
 | Comments and bookmarks | ✅ Implemented | Parsed and emitted in DOC structures. |
 | Advanced Word features | ⚠️ Partial / unsupported | SmartArt, equations, VBA/macros, tracked changes fidelity, and full layout parity are not complete. |
 
@@ -43,9 +49,9 @@ Current local validation status: `104/104` tests passing.
 
 This converter now covers a broad set of common Word constructs, but it still relies on layout heuristics in several places. The most important current limits are:
 
-- paragraph height estimation is width-aware, but still heuristic rather than font-metric exact
+- paragraph height estimation is width-aware and run-aware, but still heuristic rather than font-metric exact
 - floating image placement is substantially improved, but not a full Word-compatible layout engine
-- table layout uses inferred widths and padding, but does not yet model every table rule Word applies
+- table layout uses inferred widths, padding, border thickness, row height hints, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
 - advanced Office features such as SmartArt, equations, macros, and exact compatibility behavior are not implemented
 
 ## Next Phase
@@ -53,8 +59,9 @@ This converter now covers a broad set of common Word constructs, but it still re
 The next fidelity phase is focused on deeper table and layout behavior:
 
 - more exact table layout beyond width inference alone
-- richer cell padding/border driven geometry
-- improved line measurement and paragraph height estimation
+- richer table border and border-conflict behavior beyond simple thickness-driven geometry
+- deeper row rules such as richer interaction between explicit heights and complex cell content
+- improved line measurement and paragraph height estimation beyond the current per-run heuristic
 - additional parity work for complex floating objects and edge-case Word documents
 
 ## Installation
