@@ -170,6 +170,32 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
             Assert.Equal(3200, table.Rows[0].Cells[0].Width);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa, table.Rows[0].Cells[0].WidthUnit);
+        }
+
+        [Fact]
+        public void ReadDocument_WithTableCellPctWidth_ParsesCellWidthAndUnit()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2500\" w:type=\"pct\"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            Assert.Equal(2500, table.Rows[0].Cells[0].Width);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct, table.Rows[0].Cells[0].WidthUnit);
         }
 
         [Fact]
@@ -304,6 +330,96 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             Assert.Equal(25, table.DefaultInsideHorizontalBorderTwips);
             Assert.Equal(35, table.DefaultInsideVerticalBorderTwips);
+        }
+
+        [Fact]
+        public void ReadDocument_WithCellBorderNone_PreservesExplicitBorderOverride()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tblPr><w:tblBorders><w:insideV w:val=\"single\" w:sz=\"14\"/></w:tblBorders></w:tblPr>" +
+                             "<w:tr>" +
+                             "<w:tc><w:tcPr><w:tcBorders><w:right w:val=\"none\"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var firstCell = table.Rows[0].Cells[0];
+
+            Assert.True(firstCell.HasRightBorderOverride);
+            Assert.Equal(0, firstCell.BorderRightTwips);
+        }
+
+        [Fact]
+        public void ReadDocument_WithCellZeroMargins_PreservesExplicitPaddingOverrides()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tblPr><w:tblCellMar><w:left w:w=\"120\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/><w:top w:w=\"40\" w:type=\"dxa\"/><w:bottom w:w=\"70\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>" +
+                             "<w:tr>" +
+                             "<w:tc><w:tcPr><w:tcMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tcMar></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var cell = Assert.Single(table.Rows[0].Cells);
+
+            Assert.True(cell.HasLeftPaddingOverride);
+            Assert.True(cell.HasRightPaddingOverride);
+            Assert.True(cell.HasTopPaddingOverride);
+            Assert.True(cell.HasBottomPaddingOverride);
+            Assert.Equal(0, cell.PaddingLeftTwips);
+            Assert.Equal(0, cell.PaddingRightTwips);
+            Assert.Equal(0, cell.PaddingTopTwips);
+            Assert.Equal(0, cell.PaddingBottomTwips);
+        }
+
+        [Fact]
+        public void ReadDocument_WithPreferredTableWidth_ParsesWidthValueAndUnit()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tblPr><w:tblW w:w=\"2500\" w:type=\"pct\"/></w:tblPr>" +
+                             "<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            Assert.Equal(2500, table.PreferredWidthValue);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct, table.PreferredWidthUnit);
         }
 
         [Fact]

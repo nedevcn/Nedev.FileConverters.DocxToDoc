@@ -21,16 +21,22 @@ The implementation is no longer limited to plain text and basic formatting. In t
 - OfficeArt/Escher output for PNG, JPEG, EMF, and WMF images
 - anchored/floating image geometry with page, margin, and paragraph-relative positioning heuristics
 - table rows, cell markers, row markers, and TAPX output
-- table width inference from `tcW`, `tblGrid/gridCol`, `gridSpan`, and cell padding-aware width reduction for layout heuristics
+- table width inference from `tcW` (`dxa` and `pct`), `tblGrid/gridCol`, `gridSpan`, and cell padding-aware width reduction for layout heuristics
+- explicit zero cell margin (`tcMar`) overrides that suppress table-level default cell padding during layout heuristics
 - table cell top/bottom padding-aware vertical layout heuristics for row height and paragraph-relative floating content
 - table border thickness heuristics from `tblBorders` and `tcBorders` affecting effective cell width and row advance
 - table inside-border heuristics from `insideH` / `insideV` affecting internal row and column boundaries without double-counting adjacent cells
+- table border conflict heuristics that prefer explicit cell borders over table-level inside borders on shared boundaries, including explicit `none` / `nil` suppression on shared edges
+- table preferred width heuristics from `tblW` with `dxa`, `pct`, and `auto` behavior for scaling grid-based and explicit cell widths
+- row-level mixed width allocation heuristics that reconcile `tcW`, `tblW`, `tblGrid`, `gridSpan`, and unresolved auto-width cells before wrapped-line estimation
+- overcommitted mixed-width shrink heuristics that reserve a minimum width for auto cells and shrink resolved widths first when explicit widths already exceed `tblW`
 - table row height heuristics from `trHeight` / `hRule` affecting minimum/exact row advance and in-row vertical alignment offsets
+- exact row-height overflow clipping heuristics so later cell-local content does not keep advancing beyond a fixed-height row
 - table cell vertical alignment (`top`/`center`/`bottom`) heuristics inside tall rows
 - table cell spacing (`tblCellSpacing`) heuristics affecting effective cell width and row advance
 - run-aware paragraph width estimation that uses per-run font size and a character-width heuristic instead of only raw character count
 
-Current local validation status: `120/120` tests passing.
+Current local validation status: `135/135` tests passing.
 
 ## Feature Coverage
 
@@ -42,7 +48,7 @@ Current local validation status: `120/120` tests passing.
 | Numbering and lists | ✅ Implemented | Abstract numbering and LFO/LST structures are emitted. |
 | Fields and hyperlinks | ✅ Implemented | Field boundaries, nested fields, and hyperlink instructions are emitted. |
 | Images | ✅ Implemented with heuristics | Inline and floating images are written via DOC picture blocks and OfficeArt records. |
-| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW`, `tblGrid`, `gridSpan`, cell padding, outer and inside border thickness, row height hints, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
+| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW` including `pct` cell widths, `tblW`, `tblGrid`, `gridSpan`, row-level mixed width allocation for auto cells, overcommitted-width shrink rules, cell padding including explicit zero `tcMar` overrides, outer and inside border thickness, border conflict rules including explicit `none` / `nil` suppression on shared edges, row height hints, exact-height overflow clipping, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
 | Comments and bookmarks | ✅ Implemented | Parsed and emitted in DOC structures. |
 | Advanced Word features | ⚠️ Partial / unsupported | SmartArt, equations, VBA/macros, tracked changes fidelity, and full layout parity are not complete. |
 
@@ -52,7 +58,7 @@ This converter now covers a broad set of common Word constructs, but it still re
 
 - paragraph height estimation is width-aware and run-aware, but still heuristic rather than font-metric exact
 - floating image placement is substantially improved, but not a full Word-compatible layout engine
-- table layout uses inferred widths, padding, outer and inside border thickness, row height hints, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
+- table layout uses inferred and preferred widths, `tcW` percentage cell widths, mixed row-level width allocation, overcommitted-width shrink heuristics, padding including explicit zero cell-margin overrides, outer and inside border thickness, border conflict rules, row height hints, exact-height overflow clipping, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
 - advanced Office features such as SmartArt, equations, macros, and exact compatibility behavior are not implemented
 
 ## Next Phase
@@ -60,8 +66,10 @@ This converter now covers a broad set of common Word constructs, but it still re
 The next fidelity phase is focused on deeper table and layout behavior:
 
 - more exact table layout beyond width inference alone
-- richer table border conflict behavior beyond simple thickness-driven geometry
-- deeper row rules such as richer interaction between explicit heights and complex cell content
+- deeper mixed-width allocation rules for more Word-like handling of exceptional column combinations
+- finer shrink behavior for heavily overcommitted mixed-width rows and edge-case span combinations
+- richer table border style precedence beyond current thickness and explicit-override geometry rules
+- deeper row rules such as richer interaction between explicit heights and complex mixed content inside the same row
 - improved line measurement and paragraph height estimation beyond the current per-run heuristic
 - additional parity work for complex floating objects and edge-case Word documents
 

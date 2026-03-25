@@ -428,26 +428,29 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
                     {
                         var row = table.Rows[rowIndex];
+                        var previousRow = rowIndex > 0 ? table.Rows[rowIndex - 1] : null;
                         int rowStart = currentCp;
                         int rowHeightTwips = 0;
                         int rowGridColumnIndex = 0;
                         int totalColumnCount = ResolveTableTotalColumnCount(table, row);
-                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int verticalOffsetTwips)>();
-                        foreach (var cell in row.Cells)
+                        int tableAvailableWidthTwips = ResolveTableAvailableWidthTwips(table, row, documentAvailableWidthTwips, totalColumnCount);
+                        var resolvedRowWidthsTwips = ResolveRowCellWidthsTwips(table, row, tableAvailableWidthTwips, totalColumnCount);
+                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int bottomOffsetTwips, int verticalOffsetTwips)>();
+                        for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
                         {
+                            var cell = row.Cells[cellIndex];
                             int cellStartColumnIndex = rowGridColumnIndex;
                             int cellSpan = Math.Max(1, cell.GridSpan);
                             bool isFirstRow = rowIndex == 0;
                             bool isLastRow = rowIndex == table.Rows.Count - 1;
                             bool isFirstColumn = cellStartColumnIndex == 0;
                             bool isLastColumn = cellStartColumnIndex + cellSpan >= totalColumnCount;
-                            int resolvedCellWidthTwips = cell.Width > 0
-                                ? cell.Width
-                                : ResolveTableCellWidth(table, cellStartColumnIndex, cell.GridSpan, documentAvailableWidthTwips);
-                            int effectiveCellWidthTwips = resolvedCellWidthTwips > 0 ? resolvedCellWidthTwips : documentAvailableWidthTwips;
-                            int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, isFirstColumn);
+                            var previousCell = cellIndex > 0 ? row.Cells[cellIndex - 1] : null;
+                            int resolvedCellWidthTwips = cellIndex < resolvedRowWidthsTwips.Count ? resolvedRowWidthsTwips[cellIndex] : 0;
+                            int effectiveCellWidthTwips = resolvedCellWidthTwips > 0 ? resolvedCellWidthTwips : tableAvailableWidthTwips;
+                            int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, previousCell, isFirstColumn);
                             int rightBorderTwips = ResolveTableCellRightBorderTwips(table, cell, isLastColumn);
-                            int topBorderTwips = ResolveTableCellTopBorderTwips(table, cell, isFirstRow);
+                            int topBorderTwips = ResolveTableCellTopBorderTwips(table, cell, previousRow, cellStartColumnIndex, cellSpan, isFirstRow);
                             int bottomBorderTwips = ResolveTableCellBottomBorderTwips(table, cell, isLastRow);
                             int topPaddingTwips = ResolveTableCellTopPaddingTwips(table, cell);
                             int bottomPaddingTwips = ResolveTableCellBottomPaddingTwips(table, cell);
@@ -461,7 +464,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             int cellTotalHeightTwips = topCellSpacingTwips + topBorderTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips;
                             rowGridColumnIndex += cellSpan;
                             rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
-                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topCellSpacingTwips + topBorderTwips + topPaddingTwips, 0));
+                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topCellSpacingTwips + topBorderTwips + topPaddingTwips, bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips, 0));
                         }
 
                         rowHeightTwips = ResolveRowHeightTwips(row, rowHeightTwips);
@@ -470,15 +473,20 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             var cellLayout = cellLayouts[cellIndex];
                             int verticalOffsetTwips = ResolveTableCellVerticalAlignmentOffset(cellLayout.cell, rowHeightTwips, cellLayout.totalHeightTwips);
-                            cellLayouts[cellIndex] = (cellLayout.cell, cellLayout.availableWidthTwips, cellLayout.totalHeightTwips, cellLayout.topOffsetTwips, verticalOffsetTwips);
+                            cellLayouts[cellIndex] = (cellLayout.cell, cellLayout.availableWidthTwips, cellLayout.totalHeightTwips, cellLayout.topOffsetTwips, cellLayout.bottomOffsetTwips, verticalOffsetTwips);
                         }
 
                         foreach (var cellLayout in cellLayouts)
                         {
                             int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
+                            int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
                             foreach (var cellPara in cellLayout.cell.Paragraphs)
                             {
                                 ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips);
+                                if (row.HeightRule == TableRowHeightRule.Exact)
+                                {
+                                    cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
+                                }
                             }
 
                             // Cell Mark - treated as a paragraph terminator in MS-DOC
@@ -1401,8 +1409,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static int ResolveTableCellHorizontalPaddingTwips(TableModel table, TableCellModel cell)
         {
-            int leftPaddingTwips = cell.PaddingLeftTwips > 0 ? cell.PaddingLeftTwips : table.DefaultCellPaddingLeftTwips;
-            int rightPaddingTwips = cell.PaddingRightTwips > 0 ? cell.PaddingRightTwips : table.DefaultCellPaddingRightTwips;
+            int leftPaddingTwips = ResolveTableCellLeftPaddingTwips(table, cell);
+            int rightPaddingTwips = ResolveTableCellRightPaddingTwips(table, cell);
             return Math.Max(0, leftPaddingTwips) + Math.Max(0, rightPaddingTwips);
         }
 
@@ -1422,19 +1430,309 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return Math.Max(1, totalColumns);
         }
 
-        private static int ResolveTableCellLeftBorderTwips(TableModel table, TableCellModel cell, bool isFirstColumn)
+        private static int ResolveTableAvailableWidthTwips(TableModel table, TableRowModel row, int documentAvailableWidthTwips, int totalColumnCount)
         {
-            if (cell.BorderLeftTwips > 0)
+            int preferredWidthTwips = ResolvePreferredTableWidthTwips(table, documentAvailableWidthTwips);
+            if (preferredWidthTwips > 0)
+            {
+                return preferredWidthTwips;
+            }
+
+            int baseWidthTwips = ResolveBaseTableWidthTwips(table, row, totalColumnCount, documentAvailableWidthTwips);
+            return baseWidthTwips > 0 ? baseWidthTwips : documentAvailableWidthTwips;
+        }
+
+        private static int ResolvePreferredTableWidthTwips(TableModel table, int documentAvailableWidthTwips)
+        {
+            return table.PreferredWidthUnit switch
+            {
+                TableWidthUnit.Dxa when table.PreferredWidthValue > 0 => Math.Max(720, table.PreferredWidthValue),
+                TableWidthUnit.Pct when table.PreferredWidthValue > 0 => Math.Max(720, (int)Math.Round(documentAvailableWidthTwips * (table.PreferredWidthValue / 5000d), MidpointRounding.AwayFromZero)),
+                _ => 0
+            };
+        }
+
+        private static int ResolveBaseTableWidthTwips(TableModel table, TableRowModel row, int totalColumnCount, int fallbackWidthTwips)
+        {
+            if (table.GridColumnWidths.Count > 0)
+            {
+                int gridWidthTwips = 0;
+                foreach (int gridWidth in table.GridColumnWidths)
+                {
+                    gridWidthTwips += Math.Max(0, gridWidth);
+                }
+
+                if (gridWidthTwips > 0)
+                {
+                    return gridWidthTwips;
+                }
+            }
+
+            int explicitWidthTwips = 0;
+            foreach (var cell in row.Cells)
+            {
+                int cellWidthTwips = ResolveExplicitCellWidthTwips(cell, fallbackWidthTwips);
+                if (cellWidthTwips > 0)
+                {
+                    explicitWidthTwips += cellWidthTwips;
+                }
+            }
+
+            if (explicitWidthTwips > 0)
+            {
+                return explicitWidthTwips;
+            }
+
+            return totalColumnCount > 0 ? fallbackWidthTwips : 0;
+        }
+
+        private static List<int> ResolveRowCellWidthsTwips(TableModel table, TableRowModel row, int targetTableWidthTwips, int totalColumnCount)
+        {
+            var widthsTwips = new List<int>(row.Cells.Count);
+            var spans = new List<int>(row.Cells.Count);
+            var minimumAutoWidthsTwips = new List<int>(row.Cells.Count);
+            int gridColumnIndex = 0;
+            int resolvedWidthSumTwips = 0;
+            int unresolvedSpanSum = 0;
+            int unresolvedCellCount = 0;
+
+            foreach (var cell in row.Cells)
+            {
+                int span = Math.Max(1, cell.GridSpan);
+                int widthTwips = ResolveExplicitCellWidthTwips(cell, targetTableWidthTwips);
+                if (widthTwips <= 0 && table.GridColumnWidths.Count > 0)
+                {
+                    widthTwips = ResolveTableCellWidth(table, gridColumnIndex, span, 0);
+                }
+
+                widthsTwips.Add(Math.Max(0, widthTwips));
+                spans.Add(span);
+                minimumAutoWidthsTwips.Add(Math.Max(720, 720 * span));
+
+                if (widthTwips > 0)
+                {
+                    resolvedWidthSumTwips += widthTwips;
+                }
+                else
+                {
+                    unresolvedSpanSum += span;
+                    unresolvedCellCount += 1;
+                }
+
+                gridColumnIndex += span;
+            }
+
+            if (unresolvedSpanSum > 0)
+            {
+                int reservedMinimumAutoWidthTwips = 0;
+                for (int index = 0; index < widthsTwips.Count; index++)
+                {
+                    if (widthsTwips[index] == 0)
+                    {
+                        reservedMinimumAutoWidthTwips += minimumAutoWidthsTwips[index];
+                    }
+                }
+
+                if (resolvedWidthSumTwips > 0 && targetTableWidthTwips > 0 && resolvedWidthSumTwips + reservedMinimumAutoWidthTwips > targetTableWidthTwips)
+                {
+                    int availableResolvedWidthTwips = Math.Max(unresolvedCellCount, targetTableWidthTwips - reservedMinimumAutoWidthTwips);
+                    ScaleResolvedWidthsToTarget(widthsTwips, availableResolvedWidthTwips);
+                    resolvedWidthSumTwips = 0;
+                    foreach (int widthTwips in widthsTwips)
+                    {
+                        resolvedWidthSumTwips += Math.Max(0, widthTwips);
+                    }
+                }
+
+                int fallbackPoolTwips = Math.Max(0, targetTableWidthTwips - resolvedWidthSumTwips);
+                int assignedFallbackTwips = 0;
+                int remainingUnresolvedSpan = unresolvedSpanSum;
+                int remainingUnresolvedCells = unresolvedCellCount;
+                for (int index = 0; index < widthsTwips.Count; index++)
+                {
+                    if (widthsTwips[index] > 0)
+                    {
+                        continue;
+                    }
+
+                    int span = spans[index];
+                    int minimumWidthTwips = minimumAutoWidthsTwips[index];
+                    int distributablePoolTwips = Math.Max(0, fallbackPoolTwips - reservedMinimumAutoWidthTwips);
+                    int extraWidthTwips = remainingUnresolvedSpan > 0
+                        ? (remainingUnresolvedCells == 1
+                            ? distributablePoolTwips - Math.Max(0, assignedFallbackTwips - (reservedMinimumAutoWidthTwips - minimumWidthTwips))
+                            : (int)Math.Round(distributablePoolTwips * (span / (double)unresolvedSpanSum), MidpointRounding.AwayFromZero))
+                        : 0;
+
+                    int widthTwips = minimumWidthTwips + Math.Max(0, extraWidthTwips);
+
+                    widthTwips = Math.Max(1, widthTwips);
+                    widthsTwips[index] = widthTwips;
+                    assignedFallbackTwips += widthTwips;
+                    remainingUnresolvedSpan -= span;
+                    remainingUnresolvedCells -= 1;
+                }
+            }
+
+            ScaleWidthsToTarget(widthsTwips, targetTableWidthTwips);
+            return widthsTwips;
+        }
+
+        private static void ScaleResolvedWidthsToTarget(List<int> widthsTwips, int targetResolvedWidthTwips)
+        {
+            if (targetResolvedWidthTwips <= 0)
+            {
+                return;
+            }
+
+            int currentResolvedWidthTwips = 0;
+            foreach (int widthTwips in widthsTwips)
+            {
+                if (widthTwips > 0)
+                {
+                    currentResolvedWidthTwips += widthTwips;
+                }
+            }
+
+            if (currentResolvedWidthTwips <= 0 || currentResolvedWidthTwips <= targetResolvedWidthTwips)
+            {
+                return;
+            }
+
+            int scaledResolvedTotalTwips = 0;
+            int lastResolvedIndex = -1;
+            for (int index = 0; index < widthsTwips.Count; index++)
+            {
+                if (widthsTwips[index] <= 0)
+                {
+                    continue;
+                }
+
+                lastResolvedIndex = index;
+                int scaledWidthTwips = Math.Max(1, (int)Math.Round(widthsTwips[index] * (targetResolvedWidthTwips / (double)currentResolvedWidthTwips), MidpointRounding.AwayFromZero));
+                widthsTwips[index] = scaledWidthTwips;
+                scaledResolvedTotalTwips += scaledWidthTwips;
+            }
+
+            if (lastResolvedIndex >= 0 && scaledResolvedTotalTwips != targetResolvedWidthTwips)
+            {
+                widthsTwips[lastResolvedIndex] = Math.Max(1, widthsTwips[lastResolvedIndex] + (targetResolvedWidthTwips - scaledResolvedTotalTwips));
+            }
+        }
+
+        private static void ScaleWidthsToTarget(List<int> widthsTwips, int targetTableWidthTwips)
+        {
+            if (widthsTwips.Count == 0 || targetTableWidthTwips <= 0)
+            {
+                return;
+            }
+
+            int currentTotalTwips = 0;
+            foreach (int widthTwips in widthsTwips)
+            {
+                currentTotalTwips += Math.Max(0, widthTwips);
+            }
+
+            if (currentTotalTwips <= 0 || currentTotalTwips == targetTableWidthTwips)
+            {
+                return;
+            }
+
+            int scaledTotalTwips = 0;
+            int lastPositiveWidthIndex = -1;
+            for (int index = 0; index < widthsTwips.Count; index++)
+            {
+                int widthTwips = widthsTwips[index];
+                if (widthTwips <= 0)
+                {
+                    continue;
+                }
+
+                lastPositiveWidthIndex = index;
+                int scaledWidthTwips = Math.Max(1, (int)Math.Round(widthTwips * (targetTableWidthTwips / (double)currentTotalTwips), MidpointRounding.AwayFromZero));
+                widthsTwips[index] = scaledWidthTwips;
+                scaledTotalTwips += scaledWidthTwips;
+            }
+
+            if (lastPositiveWidthIndex >= 0 && scaledTotalTwips != targetTableWidthTwips)
+            {
+                widthsTwips[lastPositiveWidthIndex] = Math.Max(1, widthsTwips[lastPositiveWidthIndex] + (targetTableWidthTwips - scaledTotalTwips));
+            }
+        }
+
+        private static int ResolveEffectiveTableCellWidthTwips(TableModel table, TableRowModel row, TableCellModel cell, int gridColumnIndex, int gridSpan, int tableAvailableWidthTwips, int totalColumnCount)
+        {
+            int baseTableWidthTwips = ResolveBaseTableWidthTwips(table, row, totalColumnCount, tableAvailableWidthTwips);
+            int explicitCellWidthTwips = ResolveExplicitCellWidthTwips(cell, tableAvailableWidthTwips);
+            if (explicitCellWidthTwips > 0)
+            {
+                return ScaleTableCellWidthTwips(explicitCellWidthTwips, tableAvailableWidthTwips, baseTableWidthTwips);
+            }
+
+            if (table.GridColumnWidths.Count > 0)
+            {
+                int gridWidthTwips = ResolveTableCellWidth(table, gridColumnIndex, gridSpan, tableAvailableWidthTwips);
+                return ScaleTableCellWidthTwips(gridWidthTwips, tableAvailableWidthTwips, baseTableWidthTwips);
+            }
+
+            int span = Math.Max(1, gridSpan);
+            int autoWidthTwips = Math.Max(720, (int)Math.Round(tableAvailableWidthTwips * (span / (double)Math.Max(1, totalColumnCount)), MidpointRounding.AwayFromZero));
+            return autoWidthTwips;
+        }
+
+        private static int ResolveExplicitCellWidthTwips(TableCellModel cell, int referenceTableWidthTwips)
+        {
+            if (cell.Width <= 0)
+            {
+                return 0;
+            }
+
+            return cell.WidthUnit switch
+            {
+                TableWidthUnit.Pct when referenceTableWidthTwips > 0 => Math.Max(1, (int)Math.Round(referenceTableWidthTwips * (cell.Width / 5000d), MidpointRounding.AwayFromZero)),
+                TableWidthUnit.Auto => 0,
+                _ => Math.Max(0, cell.Width)
+            };
+        }
+
+        private static int ScaleTableCellWidthTwips(int cellWidthTwips, int targetTableWidthTwips, int baseTableWidthTwips)
+        {
+            if (cellWidthTwips <= 0)
+            {
+                return 0;
+            }
+
+            if (targetTableWidthTwips <= 0 || baseTableWidthTwips <= 0 || targetTableWidthTwips == baseTableWidthTwips)
+            {
+                return cellWidthTwips;
+            }
+
+            return Math.Max(720, (int)Math.Round(cellWidthTwips * (targetTableWidthTwips / (double)baseTableWidthTwips), MidpointRounding.AwayFromZero));
+        }
+
+        private static int ResolveTableCellLeftBorderTwips(TableModel table, TableCellModel cell, TableCellModel? previousCell, bool isFirstColumn)
+        {
+            if (HasExplicitLeftBorder(cell))
             {
                 return Math.Max(0, cell.BorderLeftTwips);
             }
 
-            return Math.Max(0, isFirstColumn ? table.DefaultBorderLeftTwips : table.DefaultInsideVerticalBorderTwips);
+            if (isFirstColumn)
+            {
+                return Math.Max(0, table.DefaultBorderLeftTwips);
+            }
+
+            if (previousCell != null && HasExplicitRightBorder(previousCell))
+            {
+                return Math.Max(0, previousCell.BorderRightTwips);
+            }
+
+            return Math.Max(0, table.DefaultInsideVerticalBorderTwips);
         }
 
         private static int ResolveTableCellRightBorderTwips(TableModel table, TableCellModel cell, bool isLastColumn)
         {
-            if (cell.BorderRightTwips > 0)
+            if (HasExplicitRightBorder(cell))
             {
                 return Math.Max(0, cell.BorderRightTwips);
             }
@@ -1460,27 +1758,48 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static int ResolveTableCellTopPaddingTwips(TableModel table, TableCellModel cell)
         {
-            return Math.Max(0, cell.PaddingTopTwips > 0 ? cell.PaddingTopTwips : table.DefaultCellPaddingTopTwips);
+            return Math.Max(0, HasExplicitTopPadding(cell) ? cell.PaddingTopTwips : table.DefaultCellPaddingTopTwips);
         }
 
         private static int ResolveTableCellBottomPaddingTwips(TableModel table, TableCellModel cell)
         {
-            return Math.Max(0, cell.PaddingBottomTwips > 0 ? cell.PaddingBottomTwips : table.DefaultCellPaddingBottomTwips);
+            return Math.Max(0, HasExplicitBottomPadding(cell) ? cell.PaddingBottomTwips : table.DefaultCellPaddingBottomTwips);
         }
 
-        private static int ResolveTableCellTopBorderTwips(TableModel table, TableCellModel cell, bool isFirstRow)
+        private static int ResolveTableCellLeftPaddingTwips(TableModel table, TableCellModel cell)
         {
-            if (cell.BorderTopTwips > 0)
+            return HasExplicitLeftPadding(cell) ? cell.PaddingLeftTwips : table.DefaultCellPaddingLeftTwips;
+        }
+
+        private static int ResolveTableCellRightPaddingTwips(TableModel table, TableCellModel cell)
+        {
+            return HasExplicitRightPadding(cell) ? cell.PaddingRightTwips : table.DefaultCellPaddingRightTwips;
+        }
+
+        private static int ResolveTableCellTopBorderTwips(TableModel table, TableCellModel cell, TableRowModel? previousRow, int currentStartColumnIndex, int currentSpan, bool isFirstRow)
+        {
+            if (HasExplicitTopBorder(cell))
             {
                 return Math.Max(0, cell.BorderTopTwips);
             }
 
-            return Math.Max(0, isFirstRow ? table.DefaultBorderTopTwips : table.DefaultInsideHorizontalBorderTwips);
+            if (isFirstRow)
+            {
+                return Math.Max(0, table.DefaultBorderTopTwips);
+            }
+
+            var previousBottomBorder = ResolvePreviousRowBottomBorder(previousRow, currentStartColumnIndex, currentSpan);
+            if (previousBottomBorder.hasExplicitOverride)
+            {
+                return previousBottomBorder.widthTwips;
+            }
+
+            return Math.Max(0, table.DefaultInsideHorizontalBorderTwips);
         }
 
         private static int ResolveTableCellBottomBorderTwips(TableModel table, TableCellModel cell, bool isLastRow)
         {
-            if (cell.BorderBottomTwips > 0)
+            if (HasExplicitBottomBorder(cell))
             {
                 return Math.Max(0, cell.BorderBottomTwips);
             }
@@ -1512,6 +1831,77 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 TableRowHeightRule.AtLeast => Math.Max(contentHeightTwips, row.HeightTwips),
                 _ => contentHeightTwips
             };
+        }
+
+        private static (int widthTwips, bool hasExplicitOverride) ResolvePreviousRowBottomBorder(TableRowModel? previousRow, int startColumnIndex, int span)
+        {
+            if (previousRow == null)
+            {
+                return (0, false);
+            }
+
+            int currentColumnIndex = 0;
+            int maxBottomBorderTwips = 0;
+            bool hasExplicitOverride = false;
+            foreach (var previousCell in previousRow.Cells)
+            {
+                int previousSpan = Math.Max(1, previousCell.GridSpan);
+                int previousEndColumnIndex = currentColumnIndex + previousSpan;
+                int currentEndColumnIndex = startColumnIndex + Math.Max(1, span);
+                bool overlaps = currentColumnIndex < currentEndColumnIndex && previousEndColumnIndex > startColumnIndex;
+                if (overlaps)
+                {
+                    if (HasExplicitBottomBorder(previousCell))
+                    {
+                        hasExplicitOverride = true;
+                        maxBottomBorderTwips = Math.Max(maxBottomBorderTwips, Math.Max(0, previousCell.BorderBottomTwips));
+                    }
+                }
+
+                currentColumnIndex = previousEndColumnIndex;
+            }
+
+            return (maxBottomBorderTwips, hasExplicitOverride);
+        }
+
+        private static bool HasExplicitLeftBorder(TableCellModel cell)
+        {
+            return cell.HasLeftBorderOverride || cell.BorderLeftTwips > 0;
+        }
+
+        private static bool HasExplicitLeftPadding(TableCellModel cell)
+        {
+            return cell.HasLeftPaddingOverride || cell.PaddingLeftTwips > 0;
+        }
+
+        private static bool HasExplicitRightBorder(TableCellModel cell)
+        {
+            return cell.HasRightBorderOverride || cell.BorderRightTwips > 0;
+        }
+
+        private static bool HasExplicitRightPadding(TableCellModel cell)
+        {
+            return cell.HasRightPaddingOverride || cell.PaddingRightTwips > 0;
+        }
+
+        private static bool HasExplicitTopBorder(TableCellModel cell)
+        {
+            return cell.HasTopBorderOverride || cell.BorderTopTwips > 0;
+        }
+
+        private static bool HasExplicitTopPadding(TableCellModel cell)
+        {
+            return cell.HasTopPaddingOverride || cell.PaddingTopTwips > 0;
+        }
+
+        private static bool HasExplicitBottomBorder(TableCellModel cell)
+        {
+            return cell.HasBottomBorderOverride || cell.BorderBottomTwips > 0;
+        }
+
+        private static bool HasExplicitBottomPadding(TableCellModel cell)
+        {
+            return cell.HasBottomPaddingOverride || cell.PaddingBottomTwips > 0;
         }
 
         private static int EstimateTableCellContentHeightTwips(TableCellModel cell, int cellAvailableWidthTwips)

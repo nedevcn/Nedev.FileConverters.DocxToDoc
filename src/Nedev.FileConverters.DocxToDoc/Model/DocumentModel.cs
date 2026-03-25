@@ -127,6 +127,8 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     {
         public List<TableRowModel> Rows { get; } = new List<TableRowModel>();
         public List<int> GridColumnWidths { get; } = new List<int>();
+        public int PreferredWidthValue { get; set; }
+        public TableWidthUnit PreferredWidthUnit { get; set; } = TableWidthUnit.Auto;
         public int CellSpacingTwips { get; set; }
         public int DefaultInsideHorizontalBorderTwips { get; set; }
         public int DefaultInsideVerticalBorderTwips { get; set; }
@@ -138,6 +140,13 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public int DefaultCellPaddingRightTwips { get; set; }
         public int DefaultCellPaddingTopTwips { get; set; }
         public int DefaultCellPaddingBottomTwips { get; set; }
+    }
+
+    public enum TableWidthUnit
+    {
+        Auto = 0,
+        Dxa = 1,
+        Pct = 2
     }
 
     public class TableRowModel
@@ -158,8 +167,17 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     {
         public List<ParagraphModel> Paragraphs { get; } = new List<ParagraphModel>();
         public int Width { get; set; }
+        public TableWidthUnit WidthUnit { get; set; } = TableWidthUnit.Dxa;
         public int GridSpan { get; set; } = 1;
         public TableCellVerticalAlignment VerticalAlignment { get; set; } = TableCellVerticalAlignment.Top;
+        public bool HasLeftPaddingOverride { get; set; }
+        public bool HasRightPaddingOverride { get; set; }
+        public bool HasTopPaddingOverride { get; set; }
+        public bool HasBottomPaddingOverride { get; set; }
+        public bool HasLeftBorderOverride { get; set; }
+        public bool HasRightBorderOverride { get; set; }
+        public bool HasTopBorderOverride { get; set; }
+        public bool HasBottomBorderOverride { get; set; }
         public int BorderLeftTwips { get; set; }
         public int BorderRightTwips { get; set; }
         public int BorderTopTwips { get; set; }

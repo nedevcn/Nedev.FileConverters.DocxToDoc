@@ -159,10 +159,22 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     else if (localName == "tcW" && currentCell != null)
                     {
                         string? type = xmlReader.GetAttribute("w:type");
-                        if ((string.IsNullOrEmpty(type) || string.Equals(type, "dxa", StringComparison.OrdinalIgnoreCase)) &&
-                            int.TryParse(xmlReader.GetAttribute("w:w"), out int width))
+                        currentCell.WidthUnit = type switch
+                        {
+                            "pct" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct,
+                            "auto" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa
+                        };
+
+                        if (int.TryParse(xmlReader.GetAttribute("w:w"), out int width) &&
+                            (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa ||
+                             currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct))
                         {
                             currentCell.Width = width;
+                        }
+                        else
+                        {
+                            currentCell.Width = 0;
                         }
                     }
                     else if (localName == "gridCol" && currentTable != null)
@@ -177,6 +189,23 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         if (TryReadDxaWidth(xmlReader, out int cellSpacingTwips))
                         {
                             currentTable.CellSpacingTwips = cellSpacingTwips;
+                        }
+                    }
+                    else if (localName == "tblW" && currentTable != null && currentCell == null)
+                    {
+                        string? type = xmlReader.GetAttribute("w:type");
+                        string? widthValue = xmlReader.GetAttribute("w:w");
+
+                        currentTable.PreferredWidthUnit = type switch
+                        {
+                            "dxa" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa,
+                            "pct" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto
+                        };
+
+                        if (int.TryParse(widthValue, out int preferredWidthValue))
+                        {
+                            currentTable.PreferredWidthValue = preferredWidthValue;
                         }
                     }
                     else if (localName == "gridSpan" && currentCell != null)
@@ -224,6 +253,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellBorders && currentCell != null)
                         {
+                            currentCell.HasLeftBorderOverride = true;
                             currentCell.BorderLeftTwips = leftBorderTwips;
                         }
                         else if (insideTableBorders && currentTable != null)
@@ -235,6 +265,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellBorders && currentCell != null)
                         {
+                            currentCell.HasRightBorderOverride = true;
                             currentCell.BorderRightTwips = rightBorderTwips;
                         }
                         else if (insideTableBorders && currentTable != null)
@@ -246,6 +277,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellBorders && currentCell != null)
                         {
+                            currentCell.HasTopBorderOverride = true;
                             currentCell.BorderTopTwips = topBorderTwips;
                         }
                         else if (insideTableBorders && currentTable != null)
@@ -257,6 +289,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellBorders && currentCell != null)
                         {
+                            currentCell.HasBottomBorderOverride = true;
                             currentCell.BorderBottomTwips = bottomBorderTwips;
                         }
                         else if (insideTableBorders && currentTable != null)
@@ -268,6 +301,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellMargins && currentCell != null)
                         {
+                            currentCell.HasLeftPaddingOverride = true;
                             currentCell.PaddingLeftTwips = leftPaddingTwips;
                         }
                         else if (insideTableCellMargins && currentTable != null)
@@ -279,6 +313,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellMargins && currentCell != null)
                         {
+                            currentCell.HasRightPaddingOverride = true;
                             currentCell.PaddingRightTwips = rightPaddingTwips;
                         }
                         else if (insideTableCellMargins && currentTable != null)
@@ -290,6 +325,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellMargins && currentCell != null)
                         {
+                            currentCell.HasTopPaddingOverride = true;
                             currentCell.PaddingTopTwips = topPaddingTwips;
                         }
                         else if (insideTableCellMargins && currentTable != null)
@@ -301,6 +337,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (insideCellMargins && currentCell != null)
                         {
+                            currentCell.HasBottomPaddingOverride = true;
                             currentCell.PaddingBottomTwips = bottomPaddingTwips;
                         }
                         else if (insideTableCellMargins && currentTable != null)

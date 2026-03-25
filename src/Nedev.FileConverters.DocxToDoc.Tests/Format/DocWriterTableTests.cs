@@ -583,6 +583,193 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(afterTableWithInsideH > afterTableWithoutInsideH);
         }
 
+        [Fact]
+        public void WriteDocBlocks_TableBorderConflict_UsesExplicitCellBorderOverInsideBorder()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithInsideOnly = GetSecondCellImageTopWithBorderConflict(60, null, false, pngBytes);
+            int topWithExplicitRightBorder = GetSecondCellImageTopWithBorderConflict(60, 720, true, pngBytes);
+
+            Assert.True(topWithExplicitRightBorder > topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableBorderConflict_ExplicitNoneSuppressesInsideBorder()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithInsideOnly = GetSecondCellImageTopWithBorderConflict(360, null, false, pngBytes);
+            int topWithExplicitNone = GetSecondCellImageTopWithBorderConflict(360, 0, true, pngBytes);
+
+            Assert.True(topWithExplicitNone < topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellZeroHorizontalPadding_SuppressesDefaultPadding()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithDefaultPadding = GetSecondCellImageTopWithZeroPaddingOverride(false, pngBytes);
+            int topWithZeroOverride = GetSecondCellImageTopWithZeroPaddingOverride(true, pngBytes);
+
+            Assert.True(topWithZeroOverride < topWithDefaultPadding);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellZeroVerticalPadding_SuppressesDefaultPadding()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithDefaultPadding = GetSingleCellImageTopWithZeroPaddingOverride(false, pngBytes);
+            int topWithZeroOverride = GetSingleCellImageTopWithZeroPaddingOverride(true, pngBytes);
+
+            Assert.True(topWithZeroOverride < topWithDefaultPadding);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthPct_ScalesGridWidthsForLayout()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithFullWidth = GetPreferredWidthImageTop(5000, TableWidthUnit.Pct, pngBytes);
+            int topWithHalfWidth = GetPreferredWidthImageTop(2500, TableWidthUnit.Pct, pngBytes);
+
+            Assert.True(topWithHalfWidth > topWithFullWidth);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_ScalesExplicitCellWidthsForLayout()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithWidePreferredWidth = GetPreferredExplicitWidthImageTop(5200, pngBytes);
+            int topWithNarrowPreferredWidth = GetPreferredExplicitWidthImageTop(2600, pngBytes);
+
+            Assert.True(topWithNarrowPreferredWidth > topWithWidePreferredWidth);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellWidthPct_ScalesExplicitCellWidthForLayout()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithFullCellWidth = GetPctCellWidthImageTop(5000, pngBytes);
+            int topWithHalfCellWidth = GetPctCellWidthImageTop(2500, pngBytes);
+
+            Assert.True(topWithHalfCellWidth > topWithFullCellWidth);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthPct_ScalesMixedExplicitAndGridWidths()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithWidePreferredWidth = GetMixedPreferredWidthImageTop(5000, pngBytes);
+            int topWithNarrowPreferredWidth = GetMixedPreferredWidthImageTop(2500, pngBytes);
+
+            Assert.True(topWithNarrowPreferredWidth > topWithWidePreferredWidth);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_AssignsRemainingWidthToAutoCells()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithWideRemainingWidth = GetAutoRemainingWidthImageTop(5200, pngBytes);
+            int topWithNarrowRemainingWidth = GetAutoRemainingWidthImageTop(3600, pngBytes);
+
+            Assert.True(topWithNarrowRemainingWidth > topWithWideRemainingWidth);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_ShrinksExplicitCellsBeforeOvergrowingAutoCells()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithWideTarget = GetOvercommittedAutoCellImageTop(5200, pngBytes);
+            int topWithOvercommittedTarget = GetOvercommittedAutoCellImageTop(3000, pngBytes);
+
+            Assert.True(topWithOvercommittedTarget > topWithWideTarget);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClipsOverflowingCellContentForLaterParagraphs()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedImageTop(0, TableRowHeightRule.Auto, pngBytes);
+            int topWithExactHeight = GetOverflowClippedImageTop(1200, TableRowHeightRule.Exact, pngBytes);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
         private static int GetSecondCellImageTop(bool useExplicitWidth, bool addPadding, byte[] pngBytes)
         {
             var model = new DocumentModel();
@@ -648,6 +835,145 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             row.Cells.Add(firstCell);
             row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetSecondCellImageTopWithZeroPaddingOverride(bool useZeroPaddingOverride, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel
+            {
+                DefaultCellPaddingLeftTwips = 360,
+                DefaultCellPaddingRightTwips = 360
+            };
+            table.GridColumnWidths.Add(1800);
+            table.GridColumnWidths.Add(1800);
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 1800 };
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Leading cell" } } });
+
+            var secondCell = new TableCellModel { Width = 1800 };
+            if (useZeroPaddingOverride)
+            {
+                secondCell.HasLeftPaddingOverride = true;
+                secondCell.HasRightPaddingOverride = true;
+                secondCell.PaddingLeftTwips = 0;
+                secondCell.PaddingRightTwips = 0;
+            }
+
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph is intentionally long enough to wrap differently when explicit zero left and right cell padding suppresses the table default margins.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetSingleCellImageTopWithZeroPaddingOverride(bool useZeroPaddingOverride, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel
+            {
+                DefaultCellPaddingTopTwips = 240,
+                DefaultCellPaddingBottomTwips = 240
+            };
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 2600 };
+            if (useZeroPaddingOverride)
+            {
+                cell.HasTopPaddingOverride = true;
+                cell.HasBottomPaddingOverride = true;
+                cell.PaddingTopTwips = 0;
+                cell.PaddingBottomTwips = 0;
+            }
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
             table.Rows.Add(row);
             model.Content.Add(table);
 
@@ -863,6 +1189,82 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                     new RunModel
                     {
                         Text = "This paragraph is long enough to wrap differently when an inside vertical border reduces the second cell width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetSecondCellImageTopWithBorderConflict(int insideVerticalBorderTwips, int? explicitPreviousRightBorderTwips, bool setExplicitOverride, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips };
+            table.GridColumnWidths.Add(1800);
+            table.GridColumnWidths.Add(1800);
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 1800 };
+            if (explicitPreviousRightBorderTwips.HasValue)
+            {
+                firstCell.BorderRightTwips = explicitPreviousRightBorderTwips.Value;
+            }
+            if (setExplicitOverride)
+            {
+                firstCell.HasRightBorderOverride = true;
+            }
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Leading cell" } } });
+
+            var secondCell = new TableCellModel { Width = 1800 };
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph is intentionally long enough to produce an extra wrapped line when border conflict resolution picks the larger internal boundary thickness.",
                         Properties =
                         {
                             FontSize = 24
@@ -1167,6 +1569,397 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
+        private static int GetPreferredWidthImageTop(int preferredWidthValue, TableWidthUnit widthUnit, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthValue, PreferredWidthUnit = widthUnit };
+            table.GridColumnWidths.Add(5200);
+
+            var row = new TableRowModel();
+            var cell = new TableCellModel();
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should wrap more when the preferred table width becomes narrower.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetPreferredExplicitWidthImageTop(int preferredWidthTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthTwips, PreferredWidthUnit = TableWidthUnit.Dxa };
+
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = 5200 };
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should wrap more when preferred dxa width scales explicit cell widths down.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetPctCellWidthImageTop(int cellWidthValue, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+
+            var row = new TableRowModel();
+            var cell = new TableCellModel { Width = cellWidthValue, WidthUnit = TableWidthUnit.Pct };
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should wrap more when a pct tcW produces a narrower effective cell width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetMixedPreferredWidthImageTop(int preferredWidthValue, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthValue, PreferredWidthUnit = TableWidthUnit.Pct };
+            table.GridColumnWidths.Add(1800);
+            table.GridColumnWidths.Add(3400);
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 1800 };
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Fixed" } } });
+
+            var secondCell = new TableCellModel();
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should react when mixed explicit and grid-derived widths are scaled together by tblW.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAutoRemainingWidthImageTop(int preferredWidthTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthTwips, PreferredWidthUnit = TableWidthUnit.Dxa };
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2600 };
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Fixed" } } });
+
+            var secondCell = new TableCellModel();
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should use the remaining preferred table width when the cell has no tcW or grid width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetOvercommittedAutoCellImageTop(int preferredWidthTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthTwips, PreferredWidthUnit = TableWidthUnit.Dxa };
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2200 };
+            firstCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Fixed 1" } } });
+
+            var secondCell = new TableCellModel { Width = 2200 };
+            secondCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Fixed 2" } } });
+
+            var thirdCell = new TableCellModel();
+            thirdCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This auto-width cell should still keep a bounded minimum width when explicit neighbors already exceed the preferred table width.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            thirdCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            row.Cells.Add(thirdCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
         private static int GetCellBorderImageTop(int leftBorderTwips, int rightBorderTwips, int topBorderTwips, int bottomBorderTwips, byte[] pngBytes)
         {
             var model = new DocumentModel();
@@ -1408,6 +2201,68 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             row.Cells.Add(contentCell);
             row.Cells.Add(alignedCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetOverflowClippedImageTop(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+            var cell = new TableCellModel { Width = 2000 };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This first paragraph is intentionally long enough to create overflow before the next paragraph is laid out.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
             table.Rows.Add(row);
             model.Content.Add(table);
 
