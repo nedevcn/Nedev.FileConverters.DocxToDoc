@@ -771,6 +771,23 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_PreservesPctCellBeforeShrinkingDxaNeighbors()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithPctFirstCell = GetPctVsDxaOverflowImageTop(firstCellUsesPct: true, preferredWidthTwips: 5000, pngBytes);
+            int topWithDxaFirstCell = GetPctVsDxaOverflowImageTop(firstCellUsesPct: false, preferredWidthTwips: 5000, pngBytes);
+
+            Assert.True(topWithPctFirstCell < topWithDxaFirstCell);
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableRowHeightExact_ClipsOverflowingCellContentForLaterParagraphs()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -2052,6 +2069,80 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             int imageIndex = secondCellUsesGridFallback ? 0 : 0;
             int recordOffset = fcPlcfspaMom + 8 + (imageIndex * 26);
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetPctVsDxaOverflowImageTop(bool firstCellUsesPct, int preferredWidthTwips, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthTwips, PreferredWidthUnit = TableWidthUnit.Dxa };
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel
+            {
+                Width = 2500,
+                WidthUnit = firstCellUsesPct ? TableWidthUnit.Pct : TableWidthUnit.Dxa
+            };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This leading cell should keep more width when it is percentage-based and the row overflows because its dxa neighbor should shrink first.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var secondCell = new TableCellModel { Width = 2500, WidthUnit = TableWidthUnit.Dxa };
+            secondCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Fixed neighbor" } } });
+
+            var thirdCell = new TableCellModel();
+            thirdCell.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Auto tail" } } });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            row.Cells.Add(thirdCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
 
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }

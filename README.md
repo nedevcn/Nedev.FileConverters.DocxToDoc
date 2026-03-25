@@ -31,13 +31,14 @@ The implementation is no longer limited to plain text and basic formatting. In t
 - row-level mixed width allocation heuristics that reconcile `tcW`, `tblW`, `tblGrid`, `gridSpan`, and unresolved auto-width cells before wrapped-line estimation
 - overcommitted mixed-width shrink heuristics that reserve a minimum width for auto cells and shrink resolved widths first when explicit widths already exceed `tblW`
 - mixed explicit/grid/auto overflow heuristics that prefer shrinking explicit-width cells before narrowing grid-fallback cells when unresolved auto cells still need reserved width
+- mixed explicit overflow heuristics that preserve percentage-based `tcW` cells ahead of absolute `dxa` cells when the row still needs to reserve width for unresolved auto cells
 - table row height heuristics from `trHeight` / `hRule` affecting minimum/exact row advance and in-row vertical alignment offsets
 - exact row-height overflow clipping heuristics so later cell-local content does not keep advancing beyond a fixed-height row
 - table cell vertical alignment (`top`/`center`/`bottom`) heuristics inside tall rows
 - table cell spacing (`tblCellSpacing`) heuristics affecting effective cell width and row advance
 - run-aware paragraph width estimation that uses per-run font size and a character-width heuristic instead of only raw character count
 
-Current local validation status: `136/136` tests passing.
+Current local validation status: `137/137` tests passing.
 
 ## Feature Coverage
 
@@ -49,7 +50,7 @@ Current local validation status: `136/136` tests passing.
 | Numbering and lists | ✅ Implemented | Abstract numbering and LFO/LST structures are emitted. |
 | Fields and hyperlinks | ✅ Implemented | Field boundaries, nested fields, and hyperlink instructions are emitted. |
 | Images | ✅ Implemented with heuristics | Inline and floating images are written via DOC picture blocks and OfficeArt records. |
-| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW` including `pct` cell widths, `tblW`, `tblGrid`, `gridSpan`, row-level mixed width allocation for auto cells, overcommitted-width shrink rules including explicit-before-grid shrink preference in mixed overflow rows, cell padding including explicit zero `tcMar` overrides, outer and inside border thickness, border conflict rules including explicit `none` / `nil` suppression on shared edges, row height hints, exact-height overflow clipping, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
+| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW` including `pct` cell widths, `tblW`, `tblGrid`, `gridSpan`, row-level mixed width allocation for auto cells, overcommitted-width shrink rules including explicit-before-grid shrink preference in mixed overflow rows and pct-before-dxa preservation in mixed explicit overflow rows, cell padding including explicit zero `tcMar` overrides, outer and inside border thickness, border conflict rules including explicit `none` / `nil` suppression on shared edges, row height hints, exact-height overflow clipping, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
 | Comments and bookmarks | ✅ Implemented | Parsed and emitted in DOC structures. |
 | Advanced Word features | ⚠️ Partial / unsupported | SmartArt, equations, VBA/macros, tracked changes fidelity, and full layout parity are not complete. |
 
@@ -59,7 +60,7 @@ This converter now covers a broad set of common Word constructs, but it still re
 
 - paragraph height estimation is width-aware and run-aware, but still heuristic rather than font-metric exact
 - floating image placement is substantially improved, but not a full Word-compatible layout engine
-- table layout uses inferred and preferred widths, `tcW` percentage cell widths, mixed row-level width allocation, overcommitted-width shrink heuristics including explicit-before-grid overflow handling, padding including explicit zero cell-margin overrides, outer and inside border thickness, border conflict rules, row height hints, exact-height overflow clipping, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
+- table layout uses inferred and preferred widths, `tcW` percentage cell widths, mixed row-level width allocation, overcommitted-width shrink heuristics including explicit-before-grid overflow handling and pct-before-dxa preservation, padding including explicit zero cell-margin overrides, outer and inside border thickness, border conflict rules, row height hints, exact-height overflow clipping, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
 - advanced Office features such as SmartArt, equations, macros, and exact compatibility behavior are not implemented
 
 ## Next Phase

@@ -1491,6 +1491,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             var widthsTwips = new List<int>(row.Cells.Count);
             var spans = new List<int>(row.Cells.Count);
             var isExplicitResolvedWidth = new List<bool>(row.Cells.Count);
+            var explicitWidthUnits = new List<TableWidthUnit>(row.Cells.Count);
             var minimumAutoWidthsTwips = new List<int>(row.Cells.Count);
             int gridColumnIndex = 0;
             int resolvedWidthSumTwips = 0;
@@ -1511,6 +1512,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 widthsTwips.Add(Math.Max(0, widthTwips));
                 spans.Add(span);
                 isExplicitResolvedWidth.Add(resolvedFromExplicitWidth);
+                explicitWidthUnits.Add(resolvedFromExplicitWidth ? cell.WidthUnit : TableWidthUnit.Auto);
                 minimumAutoWidthsTwips.Add(Math.Max(720, 720 * span));
 
                 if (widthTwips > 0)
@@ -1540,7 +1542,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (resolvedWidthSumTwips > 0 && targetTableWidthTwips > 0 && resolvedWidthSumTwips + reservedMinimumAutoWidthTwips > targetTableWidthTwips)
                 {
                     int availableResolvedWidthTwips = Math.Max(unresolvedCellCount, targetTableWidthTwips - reservedMinimumAutoWidthTwips);
-                    if (!ScaleExplicitWidthsToTarget(widthsTwips, isExplicitResolvedWidth, availableResolvedWidthTwips))
+                    if (!ScaleExplicitWidthsToTarget(widthsTwips, isExplicitResolvedWidth, explicitWidthUnits, availableResolvedWidthTwips))
                     {
                         ScaleResolvedWidthsToTarget(widthsTwips, availableResolvedWidthTwips);
                     }
@@ -1586,16 +1588,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return widthsTwips;
         }
 
-        private static bool ScaleExplicitWidthsToTarget(List<int> widthsTwips, List<bool> isExplicitResolvedWidth, int targetResolvedWidthTwips)
+        private static bool ScaleExplicitWidthsToTarget(List<int> widthsTwips, List<bool> isExplicitResolvedWidth, List<TableWidthUnit> explicitWidthUnits, int targetResolvedWidthTwips)
         {
-            if (targetResolvedWidthTwips <= 0 || widthsTwips.Count != isExplicitResolvedWidth.Count)
+            if (targetResolvedWidthTwips <= 0 || widthsTwips.Count != isExplicitResolvedWidth.Count || widthsTwips.Count != explicitWidthUnits.Count)
             {
                 return false;
             }
 
             int fixedResolvedWidthTwips = 0;
-            int explicitResolvedWidthTwips = 0;
-            int explicitResolvedCount = 0;
+            int pctExplicitWidthTwips = 0;
+            int dxaExplicitWidthTwips = 0;
+            int dxaExplicitCount = 0;
             for (int index = 0; index < widthsTwips.Count; index++)
             {
                 int widthTwips = Math.Max(0, widthsTwips[index]);
@@ -1606,8 +1609,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                 if (isExplicitResolvedWidth[index])
                 {
-                    explicitResolvedWidthTwips += widthTwips;
-                    explicitResolvedCount += 1;
+                    if (explicitWidthUnits[index] == TableWidthUnit.Pct)
+                    {
+                        pctExplicitWidthTwips += widthTwips;
+                    }
+                    else
+                    {
+                        dxaExplicitWidthTwips += widthTwips;
+                        dxaExplicitCount += 1;
+                    }
                 }
                 else
                 {
@@ -1615,19 +1625,25 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
-            if (explicitResolvedWidthTwips <= 0)
+            if (dxaExplicitWidthTwips <= 0)
             {
                 return false;
             }
 
-            int targetExplicitWidthTwips = targetResolvedWidthTwips - fixedResolvedWidthTwips;
-            if (targetExplicitWidthTwips <= 0 || targetExplicitWidthTwips >= explicitResolvedWidthTwips)
+            int targetDxaExplicitWidthTwips = targetResolvedWidthTwips - fixedResolvedWidthTwips - pctExplicitWidthTwips;
+            if (targetDxaExplicitWidthTwips <= 0 || targetDxaExplicitWidthTwips >= dxaExplicitWidthTwips)
             {
                 return false;
             }
 
-            targetExplicitWidthTwips = Math.Max(explicitResolvedCount, targetExplicitWidthTwips);
-            ScaleSelectedWidthsToTarget(widthsTwips, isExplicitResolvedWidth, targetExplicitWidthTwips);
+            targetDxaExplicitWidthTwips = Math.Max(dxaExplicitCount, targetDxaExplicitWidthTwips);
+            var shouldScale = new List<bool>(widthsTwips.Count);
+            for (int index = 0; index < widthsTwips.Count; index++)
+            {
+                shouldScale.Add(isExplicitResolvedWidth[index] && explicitWidthUnits[index] != TableWidthUnit.Pct);
+            }
+
+            ScaleSelectedWidthsToTarget(widthsTwips, shouldScale, targetDxaExplicitWidthTwips);
             return true;
         }
 
