@@ -22,10 +22,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         /// </summary>
         public void AddRun(int startCp, int endCp, byte[] sprms)
         {
-            if (_rgfc.Count == 0 || _rgfc[^1] != startCp)
+            if (_rgfc.Count == 0)
             {
                 _rgfc.Add(startCp);
             }
+
+            if (_rgfc[^1] < startCp)
+            {
+                _rgfc.Add(startCp);
+                _rgbx.Add(System.Array.Empty<byte>());
+            }
+
             _rgfc.Add(endCp);
             _rgbx.Add(sprms);
         }

@@ -107,10 +107,8 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var fieldBeginRun = model.Paragraphs[0].Runs.Find(r => r.IsFieldBegin);
             Assert.NotNull(fieldBeginRun);
             Assert.NotNull(fieldBeginRun.Field);
-            // Field type may be Unknown if parsing doesn't work correctly, that's acceptable for now
-            // Just verify the field structure was parsed
-            Assert.True(fieldBeginRun.Field.Type == Nedev.FileConverters.DocxToDoc.Model.FieldType.Page ||
-                       fieldBeginRun.Field.Type == Nedev.FileConverters.DocxToDoc.Model.FieldType.Unknown);
+                Assert.Equal("PAGE", fieldBeginRun.Field.Instruction);
+                Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.FieldType.Page, fieldBeginRun.Field.Type);
         }
 
         [Fact]
@@ -131,9 +129,8 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var fieldBeginRun = model.Paragraphs[0].Runs.Find(r => r.IsFieldBegin);
             Assert.NotNull(fieldBeginRun);
             Assert.NotNull(fieldBeginRun.Field);
-            // Field type may be Unknown if parsing doesn't work correctly, that's acceptable for now
-            Assert.True(fieldBeginRun.Field.Type == Nedev.FileConverters.DocxToDoc.Model.FieldType.Date ||
-                       fieldBeginRun.Field.Type == Nedev.FileConverters.DocxToDoc.Model.FieldType.Unknown);
+                Assert.Equal("DATE \\@ \"yyyy-MM-dd\"", fieldBeginRun.Field.Instruction);
+                Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.FieldType.Date, fieldBeginRun.Field.Type);
         }
 
         [Fact]

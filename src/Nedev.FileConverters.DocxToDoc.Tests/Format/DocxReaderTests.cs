@@ -94,5 +94,148 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.False(run.Properties.IsStrike);
             Assert.Equal(24, run.Properties.FontSize);
         }
+
+        [Fact]
+        public void ReadDocument_WithParagraphSpacing_ParsesSpacingProperties()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:pPr>" +
+                             "<w:spacing w:before=\"120\" w:after=\"240\" w:line=\"480\" w:lineRule=\"auto\"/>" +
+                             "</w:pPr><w:r><w:t>Spaced paragraph</w:t></w:r></w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(120, paragraph.Properties.SpacingBeforeTwips);
+            Assert.Equal(240, paragraph.Properties.SpacingAfterTwips);
+            Assert.Equal(480, paragraph.Properties.LineSpacing);
+            Assert.Equal("auto", paragraph.Properties.LineSpacingRule);
+        }
+
+        [Fact]
+        public void ReadDocument_WithParagraphIndent_ParsesIndentProperties()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:pPr>" +
+                             "<w:ind w:left=\"720\" w:right=\"360\" w:firstLine=\"240\"/>" +
+                             "</w:pPr><w:r><w:t>Indented paragraph</w:t></w:r></w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(720, paragraph.Properties.LeftIndentTwips);
+            Assert.Equal(360, paragraph.Properties.RightIndentTwips);
+            Assert.Equal(240, paragraph.Properties.FirstLineIndentTwips);
+        }
+
+        [Fact]
+        public void ReadDocument_WithTableCellWidth_ParsesCellWidth()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tr><w:tc><w:tcPr><w:tcW w:w=\"3200\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            Assert.Equal(3200, table.Rows[0].Cells[0].Width);
+        }
+
+        [Fact]
+        public void ReadDocument_WithTableGridAndGridSpan_UsesGridWidthsForCellsWithoutTcW()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tblGrid><w:gridCol w:w=\"1200\"/><w:gridCol w:w=\"1800\"/><w:gridCol w:w=\"900\"/></w:tblGrid>" +
+                             "<w:tr>" +
+                             "<w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            Assert.Equal(new[] { 1200, 1800, 900 }, table.GridColumnWidths);
+            Assert.Equal(3000, table.Rows[0].Cells[0].Width);
+            Assert.Equal(2, table.Rows[0].Cells[0].GridSpan);
+            Assert.Equal(900, table.Rows[0].Cells[1].Width);
+        }
+
+        [Fact]
+        public void ReadDocument_WithMixedGridSpanAndCellMargins_ParsesDerivedWidthsAndPadding()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tblPr><w:tblCellMar><w:left w:w=\"120\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>" +
+                             "<w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1500\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"800\"/></w:tblGrid>" +
+                             "<w:tr>" +
+                             "<w:tc><w:tcPr><w:tcW w:w=\"2500\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/><w:tcMar><w:left w:w=\"60\" w:type=\"dxa\"/><w:right w:w=\"90\" w:type=\"dxa\"/></w:tcMar></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            Assert.Equal(120, table.DefaultCellPaddingLeftTwips);
+            Assert.Equal(180, table.DefaultCellPaddingRightTwips);
+            Assert.Equal(2500, table.Rows[0].Cells[0].Width);
+            Assert.Equal(2, table.Rows[0].Cells[0].GridSpan);
+            Assert.Equal(60, table.Rows[0].Cells[0].PaddingLeftTwips);
+            Assert.Equal(90, table.Rows[0].Cells[0].PaddingRightTwips);
+            Assert.Equal(2000, table.Rows[0].Cells[1].Width);
+            Assert.Equal(800, table.Rows[0].Cells[2].Width);
+        }
     }
 }

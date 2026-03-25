@@ -122,10 +122,11 @@ namespace Nedev.FileConverters.DocxToDoc
                 // Extract necessary layout/styles/content out of OpenXML and map to MS-DOC
                 _logger.LogDebug("Reading document content");
                 var documentModel = reader.ReadDocument();
+                    int imageCount = CountImages(documentModel);
 
                 monitor.RecordParagraphs(documentModel.Paragraphs.Count);
                 monitor.RecordTables(documentModel.Content.Count(c => c is Model.TableModel));
-                monitor.RecordImages(documentModel.Content.Count(c => c is Model.ImageModel));
+                    monitor.RecordImages(imageCount);
 
                 _logger.LogInfo($"Document parsed: {documentModel.Paragraphs.Count} paragraphs, {documentModel.Styles.Count} styles");
 
@@ -332,6 +333,39 @@ namespace Nedev.FileConverters.DocxToDoc
             }
 
             _logger.LogDebug($"Input file validated: {fileInfo.Length} bytes");
+        }
+
+        private static int CountImages(Model.DocumentModel documentModel)
+        {
+            int imageCount = 0;
+
+            foreach (var item in documentModel.Content)
+            {
+                if (item is Model.ParagraphModel paragraph)
+                {
+                    imageCount += CountImages(paragraph);
+                }
+                else if (item is Model.TableModel table)
+                {
+                    foreach (var row in table.Rows)
+                    {
+                        foreach (var cell in row.Cells)
+                        {
+                            foreach (var cellParagraph in cell.Paragraphs)
+                            {
+                                imageCount += CountImages(cellParagraph);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return imageCount;
+
+            static int CountImages(Model.ParagraphModel paragraph)
+            {
+                return paragraph.Runs.Count(run => run.Image != null);
+            }
         }
     }
 }

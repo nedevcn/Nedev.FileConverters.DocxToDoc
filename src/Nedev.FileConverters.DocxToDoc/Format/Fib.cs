@@ -8,12 +8,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
     /// </summary>
     public class Fib
     {
+        private const ushort HasPicturesMask = 0x0008;
+
         public ushort wIdent { get; set; } = 0xA5EC;
         public ushort nFib { get; set; } = 0x00C1; // Microsoft Word 97-2003
         public ushort unused { get; set; } = 0x0000;
         public ushort lid { get; set; } = 0x0409; // English US (Default)
         public short pnNext { get; set; } = 0;
         public ushort fFlags { get; set; } = 0x0060; // Has FIB extended, is complex (PieceTable)
+        public bool HasPictures { get; set; }
 
         // Basic FIB ends here in this simplified version, followed by csw, rgsw, cslw, rglw, cbRgFcLcb, etc.
 
@@ -38,14 +41,20 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         public int fcSttbfffn { get; set; } // Font Table
         public int lcbSttbfffn { get; set; }
 
+        public int fcPlcffldMom { get; set; } // Main document field table
+        public int lcbPlcffldMom { get; set; }
+
+        public int fcPlcfspaMom { get; set; } // Main document shape positions
+        public int lcbPlcfspaMom { get; set; }
+
+        public int fcDggInfo { get; set; } // OfficeArt drawing group information
+        public int lcbDggInfo { get; set; }
+
         public int fcSttbLst { get; set; } // List Data (LST)
         public int lcbSttbLst { get; set; }
 
         public int fcPlfLfo { get; set; } // List Format Override (LFO)
         public int lcbPlfLfo { get; set; }
-
-        public int fcData { get; set; } // Data stream offset for embedded objects
-        public int lcbData { get; set; }
 
         public int fcPlcfBkmkf { get; set; } // Bookmark first CPs
         public int lcbPlcfBkmkf { get; set; }
@@ -66,7 +75,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             writer.Write(unused);          // 4-5 (2)
             writer.Write(lid);             // 6-7 (2)
             writer.Write(pnNext);          // 8-9 (2)
-            writer.Write(fFlags);          // 10-11 (2)
+            writer.Write((ushort)(fFlags | (HasPictures ? HasPicturesMask : 0))); // 10-11 (2)
             writer.Write((ushort)0);       // 12-13 (2) (nFibBack)
             writer.Write((int)0);          // 14-17 (4) (lKey)
             writer.Write((byte)0);         // 18 (1) (envr)
@@ -114,6 +123,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             SetPair(10, fcSttbLst, lcbSttbLst);
             SetPair(11, fcClx, lcbClx);
             SetPair(14, fcSttbfffn, lcbSttbfffn);
+            SetPair(15, fcPlcffldMom, lcbPlcffldMom);
+            SetPair(40, fcPlcfspaMom, lcbPlcfspaMom);
+            SetPair(50, fcDggInfo, lcbDggInfo);
             SetPair(53, fcPlfLfo, lcbPlfLfo);
 
             writer.Write(rgFcLcb);

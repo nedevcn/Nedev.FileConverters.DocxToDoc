@@ -113,6 +113,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.TableModel currentTable = null;
             Nedev.FileConverters.DocxToDoc.Model.TableRowModel currentRow = null;
             Nedev.FileConverters.DocxToDoc.Model.TableCellModel currentCell = null;
+            int currentRowGridColumnIndex = 0;
+            bool insideTableCellMargins = false;
+            bool insideCellMargins = false;
+                var openFields = new Stack<Nedev.FileConverters.DocxToDoc.Model.FieldModel>();
 
             while (xmlReader.Read())
             {
@@ -128,11 +132,65 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentRow = new Nedev.FileConverters.DocxToDoc.Model.TableRowModel();
                         currentTable.Rows.Add(currentRow);
+                        currentRowGridColumnIndex = 0;
                     }
                     else if (localName == "tc" && currentRow != null)
                     {
                         currentCell = new Nedev.FileConverters.DocxToDoc.Model.TableCellModel();
                         currentRow.Cells.Add(currentCell);
+                    }
+                    else if (localName == "tcW" && currentCell != null)
+                    {
+                        string? type = xmlReader.GetAttribute("w:type");
+                        if ((string.IsNullOrEmpty(type) || string.Equals(type, "dxa", StringComparison.OrdinalIgnoreCase)) &&
+                            int.TryParse(xmlReader.GetAttribute("w:w"), out int width))
+                        {
+                            currentCell.Width = width;
+                        }
+                    }
+                    else if (localName == "gridCol" && currentTable != null)
+                    {
+                        if (int.TryParse(xmlReader.GetAttribute("w:w"), out int gridWidth) && gridWidth > 0)
+                        {
+                            currentTable.GridColumnWidths.Add(gridWidth);
+                        }
+                    }
+                    else if (localName == "gridSpan" && currentCell != null)
+                    {
+                        if (int.TryParse(xmlReader.GetAttribute("w:val"), out int gridSpan) && gridSpan > 0)
+                        {
+                            currentCell.GridSpan = gridSpan;
+                        }
+                    }
+                    else if (localName == "tblCellMar" && currentTable != null && currentCell == null)
+                    {
+                        insideTableCellMargins = true;
+                    }
+                    else if (localName == "tcMar" && currentCell != null)
+                    {
+                        insideCellMargins = true;
+                    }
+                    else if ((localName == "left" || localName == "start") && TryReadDxaWidth(xmlReader, out int leftPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.PaddingLeftTwips = leftPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingLeftTwips = leftPaddingTwips;
+                        }
+                    }
+                    else if ((localName == "right" || localName == "end") && TryReadDxaWidth(xmlReader, out int rightPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.PaddingRightTwips = rightPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingRightTwips = rightPaddingTwips;
+                        }
                     }
                     else if (localName == "p")
                     {
@@ -217,6 +275,50 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             "both" => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Both,
                             _ => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left
                         };
+                    }
+                    else if (localName == "spacing" && currentParagraph != null)
+                    {
+                        if (int.TryParse(xmlReader.GetAttribute("w:before"), out int before))
+                        {
+                            currentParagraph.Properties.SpacingBeforeTwips = before;
+                        }
+
+                        if (int.TryParse(xmlReader.GetAttribute("w:after"), out int after))
+                        {
+                            currentParagraph.Properties.SpacingAfterTwips = after;
+                        }
+
+                        if (int.TryParse(xmlReader.GetAttribute("w:line"), out int line))
+                        {
+                            currentParagraph.Properties.LineSpacing = line;
+                        }
+
+                        string? lineRule = xmlReader.GetAttribute("w:lineRule");
+                        if (!string.IsNullOrWhiteSpace(lineRule))
+                        {
+                            currentParagraph.Properties.LineSpacingRule = lineRule;
+                        }
+                    }
+                    else if (localName == "ind" && currentParagraph != null)
+                    {
+                        if (int.TryParse(xmlReader.GetAttribute("w:left"), out int left))
+                        {
+                            currentParagraph.Properties.LeftIndentTwips = left;
+                        }
+
+                        if (int.TryParse(xmlReader.GetAttribute("w:right"), out int right))
+                        {
+                            currentParagraph.Properties.RightIndentTwips = right;
+                        }
+
+                        if (int.TryParse(xmlReader.GetAttribute("w:firstLine"), out int firstLine))
+                        {
+                            currentParagraph.Properties.FirstLineIndentTwips = firstLine;
+                        }
+                        else if (int.TryParse(xmlReader.GetAttribute("w:hanging"), out int hanging))
+                        {
+                            currentParagraph.Properties.FirstLineIndentTwips = -hanging;
+                        }
                     }
                     else if (localName == "r" && currentParagraph != null)
                     {
@@ -373,42 +475,74 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             case "begin":
                                 currentRun.IsFieldBegin = true;
+                                currentRun.Field = new Nedev.FileConverters.DocxToDoc.Model.FieldModel
+                                {
+                                    IsLocked = fldLock == "1" || fldLock == "true",
+                                    IsDirty = fldDirty == "1" || fldDirty == "true"
+                                };
+                                openFields.Push(currentRun.Field);
                                 break;
                             case "separate":
                                 currentRun.IsFieldSeparate = true;
+                                if (openFields.Count > 0)
+                                {
+                                    currentRun.Field = openFields.Peek();
+                                }
                                 break;
                             case "end":
                                 currentRun.IsFieldEnd = true;
+                                if (openFields.Count > 0)
+                                {
+                                    currentRun.Field = openFields.Pop();
+                                }
                                 break;
-                        }
-
-                        // Create or update field model
-                        if (currentRun.IsFieldBegin)
-                        {
-                            currentRun.Field = new Nedev.FileConverters.DocxToDoc.Model.FieldModel
-                            {
-                                IsLocked = fldLock == "1" || fldLock == "true",
-                                IsDirty = fldDirty == "1" || fldDirty == "true"
-                            };
                         }
                     }
                     else if (localName == "instrText" && currentRun != null)
                     {
                         // Field instruction text
                         string instruction = xmlReader.ReadElementContentAsString();
-                        if (currentRun.Field != null)
+                        if (openFields.Count > 0)
                         {
-                            currentRun.Field.Instruction = instruction;
-                            currentRun.Field.Type = ParseFieldType(instruction);
+                            var activeField = openFields.Peek();
+                            currentRun.Field = activeField;
+                            activeField.Instruction += instruction;
+                            activeField.Type = ParseFieldType(activeField.Instruction);
                         }
                     }
                 }
                 else if (xmlReader.NodeType == XmlNodeType.EndElement)
                 {
                     string localName = xmlReader.LocalName;
-                    if (localName == "tbl") currentTable = null;
+                    if (localName == "tbl")
+                    {
+                        currentTable = null;
+                        insideTableCellMargins = false;
+                    }
                     else if (localName == "tr") currentRow = null;
-                    else if (localName == "tc") currentCell = null;
+                    else if (localName == "tc")
+                    {
+                        if (currentCell != null)
+                        {
+                            if (currentCell.Width <= 0 && currentTable != null)
+                            {
+                                currentCell.Width = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                            }
+
+                            currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
+                        }
+
+                        currentCell = null;
+                        insideCellMargins = false;
+                    }
+                    else if (localName == "tblCellMar")
+                    {
+                        insideTableCellMargins = false;
+                    }
+                    else if (localName == "tcMar")
+                    {
+                        insideCellMargins = false;
+                    }
                     else if (localName == "p")
                     {
                         textBuffer.Append('\r');
@@ -427,6 +561,39 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             ParseBookmarks(docModel);
 
             return docModel;
+        }
+
+        private static int ResolveGridWidth(IReadOnlyList<int> gridColumnWidths, int startIndex, int gridSpan)
+        {
+            if (gridColumnWidths.Count == 0)
+            {
+                return 0;
+            }
+
+            int span = Math.Max(1, gridSpan);
+            int width = 0;
+            for (int index = 0; index < span; index++)
+            {
+                int gridIndex = startIndex + index;
+                if (gridIndex >= 0 && gridIndex < gridColumnWidths.Count)
+                {
+                    width += gridColumnWidths[gridIndex];
+                }
+            }
+
+            return width;
+        }
+
+        private static bool TryReadDxaWidth(XmlReader xmlReader, out int width)
+        {
+            string? type = xmlReader.GetAttribute("w:type");
+            if (!string.IsNullOrEmpty(type) && !string.Equals(type, "dxa", StringComparison.OrdinalIgnoreCase))
+            {
+                width = 0;
+                return false;
+            }
+
+            return int.TryParse(xmlReader.GetAttribute("w:w"), out width);
         }
 
         private void ParseBookmarks(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
@@ -666,6 +833,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             string? relId = null;
             int width = 0;
             int height = 0;
+            string? currentPositionAxis = null;
 
             // Read the entire drawing element subtree
             while (reader.Read())
@@ -673,22 +841,99 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (reader.NodeType == XmlNodeType.Element)
                 {
                     string localName = reader.LocalName;
-                    if (localName == "blip")
+                    if (localName == "inline")
+                    {
+                        image.LayoutType = Nedev.FileConverters.DocxToDoc.Model.ImageLayoutType.Inline;
+                        image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.Inline;
+                    }
+                    else if (localName == "anchor")
+                    {
+                        image.LayoutType = Nedev.FileConverters.DocxToDoc.Model.ImageLayoutType.Floating;
+                        image.BehindText = IsTrueValue(reader.GetAttribute("behindDoc"));
+                        image.AllowOverlap = !IsFalseValue(reader.GetAttribute("allowOverlap"));
+                        image.DistanceTopTwips = ConvertEmuToTwips(reader.GetAttribute("distT"));
+                        image.DistanceBottomTwips = ConvertEmuToTwips(reader.GetAttribute("distB"));
+                        image.DistanceLeftTwips = ConvertEmuToTwips(reader.GetAttribute("distL"));
+                        image.DistanceRightTwips = ConvertEmuToTwips(reader.GetAttribute("distR"));
+                    }
+                    else if (localName == "blip")
                     {
                         relId = reader.GetAttribute("r:embed");
                     }
-                    else if (localName == "extents")
+                    else if (localName == "extent" || localName == "extents")
                     {
                         // CX/CY are in EMUs (English Metric Units), 1 inch = 914400 EMUs
                         if (long.TryParse(reader.GetAttribute("cx"), out long cx))
                         {
-                            width = (int)(cx / 914400.0 * 96); // Convert to pixels at 96 DPI
+                            width = ConvertEmuToPixels(cx);
                         }
                         if (long.TryParse(reader.GetAttribute("cy"), out long cy))
                         {
-                            height = (int)(cy / 914400.0 * 96);
+                            height = ConvertEmuToPixels(cy);
                         }
                     }
+                    else if (localName == "positionH")
+                    {
+                        currentPositionAxis = "H";
+                        image.HorizontalRelativeTo = reader.GetAttribute("relativeFrom");
+                    }
+                    else if (localName == "positionV")
+                    {
+                        currentPositionAxis = "V";
+                        image.VerticalRelativeTo = reader.GetAttribute("relativeFrom");
+                    }
+                    else if (localName == "posOffset")
+                    {
+                        int offsetTwips = ConvertEmuToTwips(reader.ReadElementContentAsString());
+                        if (currentPositionAxis == "H")
+                        {
+                            image.PositionXTwips = offsetTwips;
+                        }
+                        else if (currentPositionAxis == "V")
+                        {
+                            image.PositionYTwips = offsetTwips;
+                        }
+
+                        continue;
+                    }
+                    else if (localName == "align")
+                    {
+                        string alignment = reader.ReadElementContentAsString();
+                        if (currentPositionAxis == "H")
+                        {
+                            image.HorizontalAlignment = alignment;
+                        }
+                        else if (currentPositionAxis == "V")
+                        {
+                            image.VerticalAlignment = alignment;
+                        }
+
+                        continue;
+                    }
+                    else if (localName == "wrapNone")
+                    {
+                        image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.None;
+                    }
+                    else if (localName == "wrapSquare")
+                    {
+                        image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.Square;
+                    }
+                    else if (localName == "wrapTight")
+                    {
+                        image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.Tight;
+                    }
+                    else if (localName == "wrapThrough")
+                    {
+                        image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.Through;
+                    }
+                    else if (localName == "wrapTopAndBottom")
+                    {
+                        image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.TopAndBottom;
+                    }
+                }
+                else if (reader.NodeType == XmlNodeType.EndElement && (reader.LocalName == "positionH" || reader.LocalName == "positionV"))
+                {
+                    currentPositionAxis = null;
                 }
                 else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "drawing")
                 {
@@ -706,6 +951,31 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             image.Height = height;
 
             return image;
+        }
+
+        private static int ConvertEmuToPixels(long value)
+        {
+            return (int)Math.Round(value / 914400.0 * 96.0, MidpointRounding.AwayFromZero);
+        }
+
+        private static int ConvertEmuToTwips(string? value)
+        {
+            return long.TryParse(value, out long parsedValue) ? ConvertEmuToTwips(parsedValue) : 0;
+        }
+
+        private static int ConvertEmuToTwips(long value)
+        {
+            return (int)Math.Round(value / 635.0, MidpointRounding.AwayFromZero);
+        }
+
+        private static bool IsTrueValue(string? value)
+        {
+            return value == "1" || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsFalseValue(string? value)
+        {
+            return value == "0" || string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
         }
 
         private void LoadImageData(Nedev.FileConverters.DocxToDoc.Model.ImageModel image)

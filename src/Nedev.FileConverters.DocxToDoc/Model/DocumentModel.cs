@@ -126,6 +126,9 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     public class TableModel
     {
         public List<TableRowModel> Rows { get; } = new List<TableRowModel>();
+        public List<int> GridColumnWidths { get; } = new List<int>();
+        public int DefaultCellPaddingLeftTwips { get; set; }
+        public int DefaultCellPaddingRightTwips { get; set; }
     }
 
     public class TableRowModel
@@ -137,6 +140,9 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     {
         public List<ParagraphModel> Paragraphs { get; } = new List<ParagraphModel>();
         public int Width { get; set; }
+        public int GridSpan { get; set; } = 1;
+        public int PaddingLeftTwips { get; set; }
+        public int PaddingRightTwips { get; set; }
     }
 
     public class ParagraphModel
@@ -149,6 +155,13 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public Justification Alignment { get; set; } = Justification.Left;
             public int? NumberingId { get; set; }
             public int? NumberingLevel { get; set; }
+            public int LeftIndentTwips { get; set; }
+            public int RightIndentTwips { get; set; }
+            public int FirstLineIndentTwips { get; set; }
+            public int SpacingBeforeTwips { get; set; }
+            public int SpacingAfterTwips { get; set; }
+            public int? LineSpacing { get; set; }
+            public string? LineSpacingRule { get; set; }
         }
 
         public enum Justification
@@ -209,6 +222,36 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public int Width { get; set; }
         public int Height { get; set; }
         public string? FileName { get; set; }
+        public ImageLayoutType LayoutType { get; set; } = ImageLayoutType.Inline;
+        public ImageWrapType WrapType { get; set; } = ImageWrapType.Inline;
+        public string? HorizontalRelativeTo { get; set; }
+        public string? VerticalRelativeTo { get; set; }
+        public string? HorizontalAlignment { get; set; }
+        public string? VerticalAlignment { get; set; }
+        public int PositionXTwips { get; set; }
+        public int PositionYTwips { get; set; }
+        public int DistanceLeftTwips { get; set; }
+        public int DistanceRightTwips { get; set; }
+        public int DistanceTopTwips { get; set; }
+        public int DistanceBottomTwips { get; set; }
+        public bool BehindText { get; set; }
+        public bool AllowOverlap { get; set; } = true;
+    }
+
+    public enum ImageLayoutType
+    {
+        Inline = 0,
+        Floating = 1
+    }
+
+    public enum ImageWrapType
+    {
+        Inline = 0,
+        None = 1,
+        Square = 2,
+        Tight = 3,
+        Through = 4,
+        TopAndBottom = 5
     }
 
     public class FieldModel

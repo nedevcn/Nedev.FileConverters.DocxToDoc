@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 using Nedev.FileConverters.DocxToDoc.Model;
 
 namespace Nedev.FileConverters.DocxToDoc.Format
@@ -12,6 +14,48 @@ namespace Nedev.FileConverters.DocxToDoc.Format
     /// </summary>
     public class DocWriter
     {
+        private const short OfficeArtBlipToDisplayProperty = 0x0104;
+        private const int MainDocumentDrawingId = 1;
+        private const int ShapeIdBase = MainDocumentDrawingId << 10;
+
+        private readonly struct OfficeArtPictureDescriptor
+        {
+            public OfficeArtPictureDescriptor(int cp, int shapeId, int blipIndex, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)
+            {
+                Cp = cp;
+                ShapeId = shapeId;
+                BlipIndex = blipIndex;
+                Data = data;
+                ContentType = contentType;
+                WidthTwips = widthTwips;
+                HeightTwips = heightTwips;
+                LeftTwips = leftTwips;
+                TopTwips = topTwips;
+                WrapType = wrapType;
+                BehindText = behindText;
+                AllowOverlap = allowOverlap;
+                HorizontalRelativeTo = horizontalRelativeTo;
+                VerticalRelativeTo = verticalRelativeTo;
+            }
+
+            public int Cp { get; }
+            public int ShapeId { get; }
+            public int BlipIndex { get; }
+            public byte[] Data { get; }
+            public string ContentType { get; }
+            public int WidthTwips { get; }
+            public int HeightTwips { get; }
+            public int LeftTwips { get; }
+            public int TopTwips { get; }
+            public ImageWrapType WrapType { get; }
+            public bool BehindText { get; }
+            public bool AllowOverlap { get; }
+            public string? HorizontalRelativeTo { get; }
+            public string? VerticalRelativeTo { get; }
+            public int RightTwips => LeftTwips + WidthTwips;
+            public int BottomTwips => TopTwips + HeightTwips;
+        }
+
         public void WriteDocBlocks(DocumentModel model, Stream outputStream)
         {
             // 1. Initialize streams needed for the MS-DOC file
@@ -19,62 +63,168 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             using var tableStream = new MemoryStream();
             using var dataStream = new MemoryStream();
 
-            // Track embedded objects and images
-            var embeddedObjects = new List<(int cp, byte[] data, string contentType)>();
-            int dataStreamOffset = 0;
+            // Track inline picture blocks written to the Data stream.
+            var embeddedObjects = new List<byte[]>();
+            var officeArtBlips = new List<(int cp, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)>();
+            var fieldEntries = new List<(int cp, ushort descriptor)>();
+            int nextPictureOffset = 0;
 
             // 1. Build the text buffer and formatting structures in one pass
             var textBuilder = new StringBuilder();
             var chpxWriter = new ChpxFkpWriter();
             var papxWriter = new PapxFkpWriter();
             var tapxWriter = new TapxFkpWriter();
+            var layoutSection = model.Sections.Count > 0 ? model.Sections[0] : new SectionModel();
+            int documentAvailableWidthTwips = Math.Max(1440, layoutSection.PageWidth - layoutSection.MarginLeft - layoutSection.MarginRight);
+            int paragraphVerticalCursorTwips = layoutSection.MarginTop;
             
             int currentCp = 0;
             var tableWriter = new BinaryWriter(tableStream);
 
-            void ProcessParagraph(ParagraphModel para)
+            void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips)
             {
                 int paraStart = currentCp;
-                foreach (var run in para.Runs)
+                int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(para, availableWidthTwips);
+                int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(para, paragraphAvailableWidthTwips);
+                int paragraphAdvanceTwips = EstimateParagraphAdvanceTwips(para, paragraphContentHeightTwips);
+                int paragraphTopTwips = verticalCursorTwips + para.Properties.SpacingBeforeTwips;
+                var autoCompletedFields = new HashSet<FieldModel>();
+                var separatedFields = new HashSet<FieldModel>();
+                var openFields = new List<FieldModel>();
+                for (int runIndex = 0; runIndex < para.Runs.Count; runIndex++)
                 {
+                    var run = para.Runs[runIndex];
+
+                    if (run.Field != null && autoCompletedFields.Contains(run.Field))
+                    {
+                        continue;
+                    }
+
                     // Handle images
                     if (run.Image != null && run.Image.Data != null)
                     {
+                        string imageContentType = ResolveImageContentType(run.Image.ContentType, run.Image.Data);
+                        (int imageWidthTwips, int imageHeightTwips) = ResolveImageDimensionsTwips(run.Image, imageContentType);
+
                         // Add a placeholder character for the image
                         // In MS-DOC, embedded objects use special characters
                         textBuilder.Append('\x0001'); // Object placeholder
                         
-                        // Track the image data
-                        embeddedObjects.Add((currentCp, run.Image.Data, run.Image.ContentType));
+                        // Emit a DOC-style picture block into the Data stream and point CHPX to it.
+                        byte[] pictureBlock = BuildPictureBlock(run.Image, imageContentType);
+                        int pictureOffset = nextPictureOffset;
+                        nextPictureOffset += pictureBlock.Length;
+                        embeddedObjects.Add(pictureBlock);
+
+                        if (SupportsOfficeArtBlip(imageContentType))
+                        {
+                            (int leftTwips, int topTwips, _, _) = ResolveImageBoundsTwips(run.Image, imageContentType, layoutSection, paragraphTopTwips, paragraphContentHeightTwips);
+                            officeArtBlips.Add((currentCp, run.Image.Data, imageContentType, imageWidthTwips, imageHeightTwips, leftTwips, topTwips, run.Image.WrapType, run.Image.BehindText, run.Image.AllowOverlap, run.Image.HorizontalRelativeTo, run.Image.VerticalRelativeTo));
+                        }
                         
-                        // Add CHPX with sprmCFSpec = 1 (special character)
-                        List<byte> imageSprms = new List<byte>();
-                        imageSprms.Add(0x55); imageSprms.Add(0x08); imageSprms.Add(1); // sprmCFSpec
-                        chpxWriter.AddRun(currentCp, currentCp + 1, imageSprms.ToArray());
+                        // Add CHPX with fSpec plus a Data-stream picture location.
+                        chpxWriter.AddRun(currentCp, currentCp + 1, BuildImageSprms(pictureOffset));
                         
                         currentCp += 1;
                         continue;
                     }
 
-                    if (run.Text.Length == 0) continue;
-                    
-                    // Build Runs
-                    List<byte> runSprms = new List<byte>();
-                    if (run.Properties.IsBold) { runSprms.Add(0x35); runSprms.Add(0x08); runSprms.Add(1); }
-                    if (run.Properties.IsItalic) { runSprms.Add(0x36); runSprms.Add(0x08); runSprms.Add(1); }
-                    if (run.Properties.IsStrike) { runSprms.Add(0x37); runSprms.Add(0x08); runSprms.Add(1); }
-                    if (run.Properties.FontSize.HasValue) 
-                    { 
-                        runSprms.Add(0x43); runSprms.Add(0x4A); 
-                        runSprms.Add(BitConverter.GetBytes((short)run.Properties.FontSize.Value)[0]); 
-                        runSprms.Add(BitConverter.GetBytes((short)run.Properties.FontSize.Value)[1]); 
+                    if (run.Hyperlink != null)
+                    {
+                        int hyperlinkStart = runIndex;
+                        var hyperlink = run.Hyperlink;
+                        while (runIndex + 1 < para.Runs.Count && ReferenceEquals(para.Runs[runIndex + 1].Hyperlink, hyperlink))
+                        {
+                            runIndex++;
+                        }
+
+                        AppendFieldCharacter('\x0013');
+                        AppendPlainText(BuildHyperlinkInstruction(hyperlink));
+                        AppendFieldCharacter('\x0014');
+
+                        for (int hyperlinkRunIndex = hyperlinkStart; hyperlinkRunIndex <= runIndex; hyperlinkRunIndex++)
+                        {
+                            AppendFormattedRunText(para.Runs[hyperlinkRunIndex]);
+                        }
+
+                        AppendFieldCharacter('\x0015');
+                        continue;
                     }
 
-                    if (runSprms.Count > 0)
-                        chpxWriter.AddRun(currentCp, currentCp + run.Text.Length, runSprms.ToArray());
-                    
-                    textBuilder.Append(run.Text);
-                    currentCp += run.Text.Length;
+                    if (run.IsFieldBegin)
+                    {
+                        if (run.Field != null && !HasExplicitFieldBoundary(para.Runs, runIndex + 1, run.Field))
+                        {
+                            int fieldDepth = openFields.Count;
+                            AppendFieldCharacter('\x0013', run.Field, fieldDepth);
+
+                            string instruction = ResolveFieldInstruction(run.Field);
+                            AppendPlainText(instruction);
+
+                            if (!string.IsNullOrEmpty(run.Field.Result))
+                            {
+                                AppendFieldCharacter('\x0014', run.Field, fieldDepth);
+                                AppendPlainText(run.Field.Result);
+                            }
+
+                            AppendFieldCharacter('\x0015', run.Field, fieldDepth);
+                            autoCompletedFields.Add(run.Field);
+                            continue;
+                        }
+
+                        AppendFieldCharacter('\x0013', run.Field, openFields.Count);
+                        if (run.Field != null)
+                        {
+                            openFields.Add(run.Field);
+                        }
+                        continue;
+                    }
+
+                    if (run.Field != null && !run.IsFieldSeparate && !run.IsFieldEnd && run.Text.Length == 0 && !string.IsNullOrEmpty(run.Field.Instruction))
+                    {
+                        AppendPlainText(run.Field.Instruction);
+                        continue;
+                    }
+
+                    if (run.IsFieldSeparate)
+                    {
+                        AppendFieldCharacter('\x0014', run.Field, GetFieldDepth(openFields, run.Field));
+                        continue;
+                    }
+
+                    if (run.IsFieldEnd)
+                    {
+                        int fieldDepth = GetFieldDepth(openFields, run.Field);
+                        if (run.Field != null &&
+                            !separatedFields.Contains(run.Field) &&
+                            !string.IsNullOrEmpty(run.Field.Result))
+                        {
+                            AppendFieldCharacter('\x0014', run.Field, fieldDepth);
+                            AppendPlainText(run.Field.Result);
+                        }
+
+                        AppendFieldCharacter('\x0015', run.Field, fieldDepth);
+                        if (run.Field != null)
+                        {
+                            RemoveLastOpenField(openFields, run.Field);
+                        }
+                        continue;
+                    }
+
+                    AppendFormattedRunText(run);
+                }
+
+                for (int index = openFields.Count - 1; index >= 0; index--)
+                {
+                    var openField = openFields[index];
+                    int fieldDepth = index;
+                    if (!separatedFields.Contains(openField) && !string.IsNullOrEmpty(openField.Result))
+                    {
+                        AppendFieldCharacter('\x0014', openField, fieldDepth);
+                        AppendPlainText(openField.Result);
+                    }
+
+                    AppendFieldCharacter('\x0015', openField, fieldDepth);
                 }
                 
                 // End Paragraph
@@ -93,29 +243,211 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         paraSprms.Add(0x11); paraSprms.Add(0x26); paraSprms.Add((byte)para.Properties.NumberingLevel.Value);
                     }
                 }
+                AppendParagraphFormattingSprms(paraSprms, para.Properties);
 
                 textBuilder.Append('\r');
                 papxWriter.AddParagraph(paraStart, currentCp + 1, paraSprms.ToArray());
                 currentCp += 1;
+                verticalCursorTwips += paragraphAdvanceTwips;
+
+                void AppendFieldCharacter(char marker, FieldModel? fieldModel = null, int nestingDepth = 0)
+                {
+                    textBuilder.Append(marker);
+                    if (marker == '\x0013' || marker == '\x0014' || marker == '\x0015')
+                    {
+                        fieldEntries.Add((currentCp, BuildFieldDescriptor(marker, fieldModel, nestingDepth)));
+                    }
+
+                    if (marker == '\x0014' && fieldModel != null)
+                    {
+                        separatedFields.Add(fieldModel);
+                    }
+
+                    currentCp += 1;
+                }
+
+                void AppendPlainText(string text)
+                {
+                    if (string.IsNullOrEmpty(text))
+                    {
+                        return;
+                    }
+
+                    textBuilder.Append(text);
+                    currentCp += text.Length;
+                }
+
+                void AppendFormattedRunText(RunModel runModel)
+                {
+                    if (runModel.Text.Length == 0)
+                    {
+                        return;
+                    }
+
+                    byte[] runSprms = BuildRunSprms(runModel.Properties);
+                    if (runSprms.Length > 0)
+                    {
+                        chpxWriter.AddRun(currentCp, currentCp + runModel.Text.Length, runSprms);
+                    }
+
+                    textBuilder.Append(runModel.Text);
+                    currentCp += runModel.Text.Length;
+                }
+
+                static string BuildHyperlinkInstruction(HyperlinkModel hyperlinkModel)
+                {
+                    if (!string.IsNullOrWhiteSpace(hyperlinkModel.TargetUrl))
+                    {
+                        return $"HYPERLINK \"{hyperlinkModel.TargetUrl}\"";
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(hyperlinkModel.Anchor))
+                    {
+                        return $"HYPERLINK \\l \"{hyperlinkModel.Anchor}\"";
+                    }
+
+                    return "HYPERLINK";
+                }
+
+                static ushort BuildFieldDescriptor(char marker, FieldModel? fieldModel, int nestingDepth)
+                {
+                    ushort descriptor = marker;
+                    if (fieldModel != null)
+                    {
+                        byte flags = 0;
+                        if (marker == '\x0013' && fieldModel.IsLocked)
+                        {
+                            flags |= 0x01;
+                        }
+                        if (marker == '\x0013' && fieldModel.IsDirty)
+                        {
+                            flags |= 0x02;
+                        }
+                        if (!string.IsNullOrEmpty(fieldModel.Result))
+                        {
+                            flags |= 0x04;
+                        }
+                        if (fieldModel.Type != FieldType.Unknown)
+                        {
+                            flags |= 0x08;
+                        }
+
+                        descriptor |= (ushort)(flags << 8);
+                    }
+
+                    descriptor |= (ushort)((System.Math.Min(System.Math.Max(nestingDepth, 0), 15) & 0x0F) << 12);
+
+                    return descriptor;
+                }
+
+                static bool HasExplicitFieldBoundary(IList<RunModel> runs, int startIndex, FieldModel fieldModel)
+                {
+                    for (int index = startIndex; index < runs.Count; index++)
+                    {
+                        var candidate = runs[index];
+                        if (!ReferenceEquals(candidate.Field, fieldModel))
+                        {
+                            continue;
+                        }
+
+                        if (candidate.IsFieldSeparate || candidate.IsFieldEnd)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                static string ResolveFieldInstruction(FieldModel fieldModel)
+                {
+                    if (!string.IsNullOrWhiteSpace(fieldModel.Instruction))
+                    {
+                        return fieldModel.Instruction;
+                    }
+
+                    return fieldModel.Type switch
+                    {
+                        FieldType.Page => "PAGE",
+                        FieldType.NumPages => "NUMPAGES",
+                        FieldType.Date => "DATE",
+                        FieldType.Time => "TIME",
+                        FieldType.Author => "AUTHOR",
+                        FieldType.Title => "TITLE",
+                        FieldType.Subject => "SUBJECT",
+                        FieldType.FileName => "FILENAME",
+                        FieldType.Hyperlink => "HYPERLINK",
+                        FieldType.Bookmark => "BOOKMARK",
+                        FieldType.Index => "INDEX",
+                        FieldType.Seq => "SEQ",
+                        FieldType.Ref => "REF",
+                        FieldType.MergeField => "MERGEFIELD",
+                        _ => string.Empty
+                    };
+                }
+
+                static void RemoveLastOpenField(List<FieldModel> openFieldList, FieldModel fieldModel)
+                {
+                    for (int index = openFieldList.Count - 1; index >= 0; index--)
+                    {
+                        if (ReferenceEquals(openFieldList[index], fieldModel))
+                        {
+                            openFieldList.RemoveAt(index);
+                            return;
+                        }
+                    }
+                }
+
+                static int GetFieldDepth(List<FieldModel> openFieldList, FieldModel? fieldModel)
+                {
+                    if (fieldModel == null)
+                    {
+                        return 0;
+                    }
+
+                    for (int index = openFieldList.Count - 1; index >= 0; index--)
+                    {
+                        if (ReferenceEquals(openFieldList[index], fieldModel))
+                        {
+                            return index;
+                        }
+                    }
+
+                    return 0;
+                }
             }
 
             foreach (var item in model.Content)
             {
                 if (item is ParagraphModel para)
                 {
-                    ProcessParagraph(para);
+                    ProcessParagraph(para, ref paragraphVerticalCursorTwips, documentAvailableWidthTwips);
                 }
                 else if (item is TableModel table)
                 {
                     foreach (var row in table.Rows)
                     {
                         int rowStart = currentCp;
+                        int rowHeightTwips = 0;
+                        int rowGridColumnIndex = 0;
                         foreach (var cell in row.Cells)
                         {
+                            int cellVerticalCursorTwips = 0;
+                            int resolvedCellWidthTwips = cell.Width > 0
+                                ? cell.Width
+                                : ResolveTableCellWidth(table, rowGridColumnIndex, cell.GridSpan, documentAvailableWidthTwips);
+                            int effectiveCellWidthTwips = resolvedCellWidthTwips > 0 ? resolvedCellWidthTwips : documentAvailableWidthTwips;
+                            int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
+                            int cellAvailableWidthTwips = Math.Max(720, effectiveCellWidthTwips - horizontalCellPaddingTwips);
                             foreach (var cellPara in cell.Paragraphs)
                             {
-                                ProcessParagraph(cellPara);
+                                ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellAvailableWidthTwips);
                             }
+
+                            rowGridColumnIndex += Math.Max(1, cell.GridSpan);
+
+                            rowHeightTwips = Math.Max(rowHeightTwips, cellVerticalCursorTwips);
+
                             // Cell Mark - treated as a paragraph terminator in MS-DOC
                             int cellMarkStart = currentCp;
                             textBuilder.Append('\x0007');
@@ -146,6 +478,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         tapSprms.AddRange(defTable);
                         
                         tapxWriter.AddRow(rowStart, currentCp, tapSprms.ToArray());
+                        paragraphVerticalCursorTwips += rowHeightTwips;
                     }
                 }
             }
@@ -228,23 +561,54 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             WriteLfo(tableWriter, model);
             int lcbPlfLfo = (int)tableStream.Position - fcPlfLfo;
 
+            int fcPlcffldMom = 0;
+            int lcbPlcffldMom = 0;
+            if (fieldEntries.Count > 0)
+            {
+                fcPlcffldMom = (int)tableStream.Position;
+                foreach (var (cp, _) in fieldEntries)
+                {
+                    tableWriter.Write(cp);
+                }
+                tableWriter.Write(currentCp);
+
+                foreach (var (_, descriptor) in fieldEntries)
+                {
+                    tableWriter.Write(descriptor);
+                }
+
+                lcbPlcffldMom = (int)tableStream.Position - fcPlcffldMom;
+            }
+
+            var officeArtPictures = BuildOfficeArtPictureDescriptors(officeArtBlips);
+
+            int fcPlcfspaMom = 0;
+            int lcbPlcfspaMom = 0;
+            if (officeArtPictures.Count > 0)
+            {
+                fcPlcfspaMom = (int)tableStream.Position;
+                WritePlcfspaMom(tableWriter, officeArtPictures, currentCp);
+                lcbPlcfspaMom = (int)tableStream.Position - fcPlcfspaMom;
+            }
+
+            int fcDggInfo = 0;
+            int lcbDggInfo = 0;
+            if (officeArtPictures.Count > 0)
+            {
+                byte[] officeArtContent = BuildOfficeArtContent(officeArtPictures);
+                if (officeArtContent.Length > 0)
+                {
+                    fcDggInfo = (int)tableStream.Position;
+                    tableWriter.Write(officeArtContent);
+                    lcbDggInfo = officeArtContent.Length;
+                }
+            }
+
             // 8.5. Write embedded objects/images to Data stream
-            int fcData = 0;
-            int lcbData = 0;
             if (embeddedObjects.Count > 0)
             {
-                fcData = (int)dataStream.Position;
                 using var dataWriter = new BinaryWriter(dataStream, System.Text.Encoding.GetEncoding(1252), leaveOpen: true);
-                
-                foreach (var (cp, data, contentType) in embeddedObjects)
-                {
-                    // Write object header (simplified)
-                    // In a full implementation, this would be a proper OLE object header
-                    dataWriter.Write(data.Length); // Size
-                    dataWriter.Write(data); // Data
-                }
-                
-                lcbData = (int)dataStream.Position - fcData;
+                WritePictureBlocks(dataWriter, embeddedObjects);
             }
 
             // 8.6. Write Bookmarks (PlcfBkmkf and PlcfBkmkl)
@@ -355,19 +719,24 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbStshf = lcbStshf,
                 fcSttbfffn = fcSttbfffn,
                 lcbSttbfffn = lcbSttbfffn,
+                fcPlcffldMom = fcPlcffldMom,
+                lcbPlcffldMom = lcbPlcffldMom,
+                fcPlcfspaMom = fcPlcfspaMom,
+                lcbPlcfspaMom = lcbPlcfspaMom,
+                fcDggInfo = fcDggInfo,
+                lcbDggInfo = lcbDggInfo,
                 fcSttbLst = fcSttbLst,
                 lcbSttbLst = lcbSttbLst,
                 fcPlfLfo = fcPlfLfo,
                 lcbPlfLfo = lcbPlfLfo,
-                fcData = fcData,
-                lcbData = lcbData,
                 fcPlcfBkmkf = fcPlcfBkmkf,
                 lcbPlcfBkmkf = lcbPlcfBkmkf,
                 fcPlcfBkmkl = fcPlcfBkmkl,
                 lcbPlcfBkmkl = lcbPlcfBkmkl,
                 fcSttbfbkmk = fcSttbfbkmk,
                 lcbSttbfbkmk = lcbSttbfbkmk,
-                ccpText = currentCp
+                ccpText = currentCp,
+                HasPictures = embeddedObjects.Count > 0
             };
             fib.WriteTo(new BinaryWriter(wordDocumentStream, System.Text.Encoding.GetEncoding(1252), leaveOpen: true));
 
@@ -379,6 +748,867 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             
             // 9. Write out the final CFB to the destination
             cfbWriter.WriteTo(outputStream);
+        }
+
+        private static void WritePictureBlocks(BinaryWriter writer, List<byte[]> pictureBlocks)
+        {
+            foreach (var pictureBlock in pictureBlocks)
+            {
+                writer.Write(pictureBlock);
+            }
+        }
+
+        private static byte[] BuildImageSprms(int pictureOffset)
+        {
+            var sprms = new List<byte>
+            {
+                0x55, 0x08, 0x01,
+                0x03, 0x6A
+            };
+
+            sprms.AddRange(BitConverter.GetBytes(pictureOffset));
+
+            return sprms.ToArray();
+        }
+
+        private static byte[] BuildPictureBlock(ImageModel image, string? resolvedContentType = null)
+        {
+            byte[] imageData = image.Data ?? Array.Empty<byte>();
+            string imageContentType = resolvedContentType ?? ResolveImageContentType(image.ContentType, imageData);
+            (int widthTwips, int heightTwips) = ResolveImageDimensionsTwips(image, imageContentType);
+
+            byte[] block = new byte[0x44 + imageData.Length];
+            BitConverter.GetBytes(block.Length).CopyTo(block, 0x00);
+            BitConverter.GetBytes((ushort)0x44).CopyTo(block, 0x04);
+            BitConverter.GetBytes(GetPictureMappingMode(imageContentType)).CopyTo(block, 0x06);
+            BitConverter.GetBytes(ClampToShort(ConvertTwipsToMm100(widthTwips))).CopyTo(block, 0x08);
+            BitConverter.GetBytes(ClampToShort(ConvertTwipsToMm100(heightTwips))).CopyTo(block, 0x0A);
+            BitConverter.GetBytes(GetPictureBlockType(imageContentType)).CopyTo(block, 0x0E);
+            BitConverter.GetBytes(ClampToShort(widthTwips)).CopyTo(block, 0x1C);
+            BitConverter.GetBytes(ClampToShort(heightTwips)).CopyTo(block, 0x1E);
+            BitConverter.GetBytes((ushort)1000).CopyTo(block, 0x20);
+            BitConverter.GetBytes((ushort)1000).CopyTo(block, 0x22);
+            imageData.CopyTo(block, 0x44);
+
+            return block;
+        }
+
+        private static bool SupportsOfficeArtBlip(string? contentType)
+        {
+            return contentType == "image/png" ||
+                   contentType == "image/jpeg" ||
+                   contentType == "image/x-emf" ||
+                   contentType == "image/x-wmf";
+        }
+
+        private static List<OfficeArtPictureDescriptor> BuildOfficeArtPictureDescriptors(
+            List<(int cp, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)> officeArtBlips)
+        {
+            var pictures = new List<OfficeArtPictureDescriptor>(officeArtBlips.Count);
+            for (int index = 0; index < officeArtBlips.Count; index++)
+            {
+                var picture = officeArtBlips[index];
+                pictures.Add(new OfficeArtPictureDescriptor(
+                    picture.cp,
+                    GetPictureShapeId(index),
+                    index + 1,
+                    picture.data,
+                    picture.contentType,
+                    picture.widthTwips,
+                    picture.heightTwips,
+                    picture.leftTwips,
+                        picture.topTwips,
+                        picture.wrapType,
+                        picture.behindText,
+                        picture.allowOverlap,
+                        picture.horizontalRelativeTo,
+                        picture.verticalRelativeTo));
+            }
+
+            return pictures;
+        }
+
+        private static void WritePlcfspaMom(
+            BinaryWriter writer,
+            List<OfficeArtPictureDescriptor> officeArtPictures,
+            int documentEndCp)
+        {
+            foreach (var picture in officeArtPictures)
+            {
+                writer.Write(picture.Cp);
+            }
+
+            writer.Write(documentEndCp);
+
+            foreach (var picture in officeArtPictures)
+            {
+                writer.Write(picture.ShapeId);
+                writer.Write(picture.LeftTwips);
+                writer.Write(picture.TopTwips);
+                writer.Write(picture.RightTwips);
+                writer.Write(picture.BottomTwips);
+                writer.Write((short)0);
+                writer.Write(BuildFloatingLayoutFlags(picture));
+            }
+        }
+
+        private static byte[] BuildOfficeArtContent(List<OfficeArtPictureDescriptor> officeArtPictures)
+        {
+            if (officeArtPictures.Count == 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            var bseRecords = new List<byte[]>(officeArtPictures.Count);
+            foreach (var picture in officeArtPictures)
+            {
+                bseRecords.Add(BuildBlipStoreEntry(picture.Data, picture.ContentType, picture.WidthTwips, picture.HeightTwips));
+            }
+
+            byte[] dggRecord = BuildDggRecord(officeArtPictures.Count + 1, GetNextShapeId(officeArtPictures.Count));
+            byte[] bstoreContainer = BuildEscherContainer(0xF001, (ushort)officeArtPictures.Count, bseRecords);
+            byte[] dggContainer = BuildEscherContainer(0xF000, 0, new[] { dggRecord, bstoreContainer });
+            byte[] drawingContainer = BuildDrawingContainer(officeArtPictures);
+
+            using var stream = new MemoryStream();
+            stream.Write(dggContainer, 0, dggContainer.Length);
+            stream.WriteByte(0x00);
+            stream.Write(drawingContainer, 0, drawingContainer.Length);
+
+            return stream.ToArray();
+        }
+
+        private static byte[] BuildDrawingContainer(List<OfficeArtPictureDescriptor> officeArtPictures)
+        {
+            var shapeContainers = new List<byte[]>(officeArtPictures.Count + 1)
+            {
+                BuildGroupShapeContainer()
+            };
+
+            foreach (var picture in officeArtPictures)
+            {
+                shapeContainers.Add(BuildPictureShapeContainer(picture.ShapeId, picture.BlipIndex));
+            }
+
+            byte[] dgRecord = BuildDgRecord(officeArtPictures.Count + 1, GetNextShapeId(officeArtPictures.Count));
+            byte[] spgrContainer = BuildEscherContainer(0xF003, 0, shapeContainers);
+
+            return BuildEscherContainer(0xF002, 0, new[] { dgRecord, spgrContainer });
+        }
+
+        private static byte[] BuildDggRecord(int savedShapeCount, int nextShapeId)
+        {
+            byte[] content = new byte[24];
+            BitConverter.GetBytes(nextShapeId).CopyTo(content, 0x00);
+            BitConverter.GetBytes(2).CopyTo(content, 0x04);
+            BitConverter.GetBytes(savedShapeCount).CopyTo(content, 0x08);
+            BitConverter.GetBytes(1).CopyTo(content, 0x0C);
+            BitConverter.GetBytes(MainDocumentDrawingId).CopyTo(content, 0x10);
+            BitConverter.GetBytes(savedShapeCount + 1).CopyTo(content, 0x14);
+
+            return BuildEscherRecord(0xF006, 0, content);
+        }
+
+        private static byte[] BuildDgRecord(int shapeCount, int nextShapeId)
+        {
+            byte[] content = new byte[8];
+            BitConverter.GetBytes(shapeCount).CopyTo(content, 0x00);
+            BitConverter.GetBytes(nextShapeId).CopyTo(content, 0x04);
+
+            return BuildEscherRecord(0xF008, (ushort)(MainDocumentDrawingId << 4), content);
+        }
+
+        private static byte[] BuildGroupShapeContainer()
+        {
+            byte[] spRecord = BuildSpRecord(GetGroupShapeId(), 0, 0x0805);
+            byte[] spgrRecord = BuildSpgrRecord();
+
+            return BuildEscherContainer(0xF004, 0, new[] { spRecord, spgrRecord });
+        }
+
+        private static byte[] BuildPictureShapeContainer(int shapeId, int blipIndex)
+        {
+            byte[] spRecord = BuildSpRecord(shapeId, 75, 0x0A02);
+            byte[] optRecord = BuildOptRecord(new[]
+            {
+                BuildSimpleProperty(OfficeArtBlipToDisplayProperty, true, blipIndex)
+            });
+
+            return BuildEscherContainer(0xF004, 0, new[] { spRecord, optRecord });
+        }
+
+        private static byte[] BuildSpgrRecord()
+        {
+            byte[] content = new byte[16];
+            BitConverter.GetBytes(0).CopyTo(content, 0x00);
+            BitConverter.GetBytes(0).CopyTo(content, 0x04);
+            BitConverter.GetBytes(1).CopyTo(content, 0x08);
+            BitConverter.GetBytes(1).CopyTo(content, 0x0C);
+
+            return BuildEscherRecord(0xF009, 0x0001, content);
+        }
+
+        private static byte[] BuildSpRecord(int shapeId, ushort shapeType, int flags)
+        {
+            byte[] content = new byte[8];
+            BitConverter.GetBytes(shapeId).CopyTo(content, 0x00);
+            BitConverter.GetBytes(flags).CopyTo(content, 0x04);
+
+            return BuildEscherRecord(0xF00A, (ushort)((shapeType << 4) | 0x0002), content);
+        }
+
+        private static byte[] BuildOptRecord(IEnumerable<byte[]> properties)
+        {
+            using var stream = new MemoryStream();
+            int propertyCount = 0;
+            foreach (var property in properties)
+            {
+                stream.Write(property, 0, property.Length);
+                propertyCount++;
+            }
+
+            return BuildEscherRecord(0xF00B, (ushort)((propertyCount << 4) | 0x0003), stream.ToArray());
+        }
+
+        private static byte[] BuildSimpleProperty(short propertyNumber, bool isBlipId, int value)
+        {
+            byte[] property = new byte[6];
+            short propertyId = (short)(propertyNumber | (isBlipId ? 0x4000 : 0));
+            BitConverter.GetBytes(propertyId).CopyTo(property, 0x00);
+            BitConverter.GetBytes(value).CopyTo(property, 0x02);
+
+            return property;
+        }
+
+        private static int GetGroupShapeId()
+        {
+            return ShapeIdBase + 1;
+        }
+
+        private static int GetPictureShapeId(int pictureIndex)
+        {
+            return ShapeIdBase + pictureIndex + 2;
+        }
+
+        private static int GetNextShapeId(int pictureCount)
+        {
+            return ShapeIdBase + pictureCount + 3;
+        }
+
+        private static byte[] BuildBlipStoreEntry(byte[] imageData, string contentType, int widthTwips, int heightTwips)
+        {
+            byte blipType = GetOfficeArtBlipType(contentType);
+            byte[] uid = ComputeOfficeArtUid(imageData);
+            byte[] blipRecord = BuildBlipRecord(imageData, contentType, uid, widthTwips, heightTwips);
+
+            byte[] content = new byte[36 + blipRecord.Length];
+            content[0] = blipType;
+            content[1] = GetOfficeArtMacBlipType(contentType);
+            uid.CopyTo(content, 2);
+            BitConverter.GetBytes((short)0).CopyTo(content, 18);
+            BitConverter.GetBytes(blipRecord.Length - 8).CopyTo(content, 20);
+            BitConverter.GetBytes(1).CopyTo(content, 24);
+            BitConverter.GetBytes(0).CopyTo(content, 28);
+            content[32] = 0;
+            content[33] = 0;
+            content[34] = 0;
+            content[35] = 0;
+            blipRecord.CopyTo(content, 36);
+
+            return BuildEscherRecord(0xF007, (ushort)((blipType << 4) | 0x0002), content);
+        }
+
+        private static byte[] BuildBlipRecord(byte[] imageData, string contentType, byte[] uid, int widthTwips, int heightTwips)
+        {
+            if (contentType == "image/x-emf" || contentType == "image/x-wmf")
+            {
+                return BuildMetafileBlipRecord(imageData, contentType, uid, widthTwips, heightTwips);
+            }
+
+            ushort recordId = contentType == "image/jpeg" ? (ushort)0xF01D : (ushort)0xF01E;
+            ushort instance = contentType == "image/jpeg" ? (ushort)0x046A : (ushort)0x06E0;
+
+            byte[] content = new byte[17 + imageData.Length];
+            uid.CopyTo(content, 0);
+            content[16] = 0xFF;
+            imageData.CopyTo(content, 17);
+
+            return BuildEscherRecord(recordId, instance, content);
+        }
+
+        private static byte[] BuildMetafileBlipRecord(byte[] imageData, string contentType, byte[] uid, int widthTwips, int heightTwips)
+        {
+            byte[] normalizedImageData = NormalizeMetafilePayload(imageData, contentType);
+            byte[] compressedData = CompressMetafilePayload(normalizedImageData);
+            ushort recordId = contentType == "image/x-emf" ? (ushort)0xF01A : (ushort)0xF01B;
+            ushort instance = contentType == "image/x-emf" ? (ushort)0x3D40 : (ushort)0x2160;
+
+            byte[] content = new byte[50 + compressedData.Length];
+            uid.CopyTo(content, 0);
+            BitConverter.GetBytes(normalizedImageData.Length).CopyTo(content, 16);
+            BitConverter.GetBytes(0).CopyTo(content, 20);
+            BitConverter.GetBytes(0).CopyTo(content, 24);
+            BitConverter.GetBytes(widthTwips).CopyTo(content, 28);
+            BitConverter.GetBytes(heightTwips).CopyTo(content, 32);
+            BitConverter.GetBytes(ConvertTwipsToEmu(widthTwips)).CopyTo(content, 36);
+            BitConverter.GetBytes(ConvertTwipsToEmu(heightTwips)).CopyTo(content, 40);
+            BitConverter.GetBytes(compressedData.Length).CopyTo(content, 44);
+            content[48] = 0x00;
+            content[49] = 0xFE;
+            compressedData.CopyTo(content, 50);
+
+            return BuildEscherRecord(recordId, instance, content);
+        }
+
+        private static byte GetOfficeArtBlipType(string contentType)
+        {
+            return contentType switch
+            {
+                "image/x-emf" => 0x02,
+                "image/x-wmf" => 0x03,
+                "image/jpeg" => 0x05,
+                "image/png" => 0x06,
+                _ => 0x00
+            };
+        }
+
+        private static byte GetOfficeArtMacBlipType(string contentType)
+        {
+            return contentType switch
+            {
+                "image/x-emf" => 0x04,
+                "image/x-wmf" => 0x04,
+                _ => GetOfficeArtBlipType(contentType)
+            };
+        }
+
+        private static byte[] NormalizeMetafilePayload(byte[] imageData, string contentType)
+        {
+            if (contentType == "image/x-wmf" && HasWmfPlaceableHeader(imageData))
+            {
+                byte[] normalized = new byte[imageData.Length - 22];
+                Buffer.BlockCopy(imageData, 22, normalized, 0, normalized.Length);
+                return normalized;
+            }
+
+            return imageData;
+        }
+
+        private static bool HasWmfPlaceableHeader(byte[] imageData)
+        {
+            return imageData.Length > 22 &&
+                   imageData[0] == 0xD7 &&
+                   imageData[1] == 0xCD &&
+                   imageData[2] == 0xC6 &&
+                   imageData[3] == 0x9A;
+        }
+
+        private static byte[] CompressMetafilePayload(byte[] imageData)
+        {
+            using var output = new MemoryStream();
+            using (var deflater = new DeflateStream(output, CompressionLevel.Optimal, leaveOpen: true))
+            {
+                deflater.Write(imageData, 0, imageData.Length);
+            }
+
+            return output.ToArray();
+        }
+
+        private static byte[] ComputeOfficeArtUid(byte[] imageData)
+        {
+            using var md5 = MD5.Create();
+            return md5.ComputeHash(imageData);
+        }
+
+        private static byte[] BuildEscherContainer(ushort recordId, ushort instance, IEnumerable<byte[]> children)
+        {
+            using var stream = new MemoryStream();
+            foreach (var child in children)
+            {
+                stream.Write(child, 0, child.Length);
+            }
+
+            return BuildEscherRecord(recordId, (ushort)((instance << 4) | 0x000F), stream.ToArray());
+        }
+
+        private static byte[] BuildEscherRecord(ushort recordId, ushort options, byte[] content)
+        {
+            byte[] record = new byte[8 + content.Length];
+            BitConverter.GetBytes(options).CopyTo(record, 0x00);
+            BitConverter.GetBytes(recordId).CopyTo(record, 0x02);
+            BitConverter.GetBytes(content.Length).CopyTo(record, 0x04);
+            content.CopyTo(record, 0x08);
+            return record;
+        }
+
+        private static short GetPictureMappingMode(string? contentType)
+        {
+            return contentType switch
+            {
+                "image/x-wmf" => 8,
+                "image/x-emf" => 8,
+                _ => 0x64
+            };
+        }
+
+        private static short GetPictureBlockType(string? contentType)
+        {
+            return contentType switch
+            {
+                "image/x-wmf" => 0x08,
+                "image/x-emf" => 0x08,
+                _ => 0x00
+            };
+        }
+
+        private static string ResolveImageContentType(string? contentType, byte[] imageData)
+        {
+            if (!string.IsNullOrWhiteSpace(contentType))
+            {
+                return contentType;
+            }
+
+            if (imageData.Length >= 8 &&
+                imageData[0] == 0x89 &&
+                imageData[1] == 0x50 &&
+                imageData[2] == 0x4E &&
+                imageData[3] == 0x47 &&
+                imageData[4] == 0x0D &&
+                imageData[5] == 0x0A &&
+                imageData[6] == 0x1A &&
+                imageData[7] == 0x0A)
+            {
+                return "image/png";
+            }
+
+            if (imageData.Length >= 3 &&
+                imageData[0] == 0x47 &&
+                imageData[1] == 0x49 &&
+                imageData[2] == 0x46)
+            {
+                return "image/gif";
+            }
+
+            if (imageData.Length >= 2 &&
+                imageData[0] == 0xFF &&
+                imageData[1] == 0xD8)
+            {
+                return "image/jpeg";
+            }
+
+            if (imageData.Length >= 2 &&
+                imageData[0] == 0x42 &&
+                imageData[1] == 0x4D)
+            {
+                return "image/bmp";
+            }
+
+            if (imageData.Length >= 4 &&
+                ((imageData[0] == 0x49 && imageData[1] == 0x49 && imageData[2] == 0x2A && imageData[3] == 0x00) ||
+                 (imageData[0] == 0x4D && imageData[1] == 0x4D && imageData[2] == 0x00 && imageData[3] == 0x2A)))
+            {
+                return "image/tiff";
+            }
+
+            if (imageData.Length >= 4 &&
+                imageData[0] == 0x01 &&
+                imageData[1] == 0x00 &&
+                imageData[2] == 0x00 &&
+                imageData[3] == 0x00)
+            {
+                return "image/x-emf";
+            }
+
+            if (imageData.Length >= 4 &&
+                imageData[0] == 0xD7 &&
+                imageData[1] == 0xCD &&
+                imageData[2] == 0xC6 &&
+                imageData[3] == 0x9A)
+            {
+                return "image/x-wmf";
+            }
+
+            return string.Empty;
+        }
+
+        private static int GetImageDimensionTwips(int pixels)
+        {
+            if (pixels <= 0)
+            {
+                return 1;
+            }
+
+            return pixels * 15;
+        }
+
+        private static (int widthTwips, int heightTwips) ResolveImageDimensionsTwips(ImageModel image, string? contentType)
+        {
+            int widthTwips = GetImageDimensionTwips(image.Width);
+            int heightTwips = GetImageDimensionTwips(image.Height);
+
+            if (image.Width > 0 && image.Height > 0)
+            {
+                return (widthTwips, heightTwips);
+            }
+
+            if (TryGetImageDimensionsTwipsFromPayload(image.Data, contentType, out int inferredWidthTwips, out int inferredHeightTwips))
+            {
+                if (image.Width <= 0)
+                {
+                    widthTwips = inferredWidthTwips;
+                }
+
+                if (image.Height <= 0)
+                {
+                    heightTwips = inferredHeightTwips;
+                }
+            }
+
+            return (widthTwips, heightTwips);
+        }
+
+        private static (int leftTwips, int topTwips, int rightTwips, int bottomTwips) ResolveImageBoundsTwips(ImageModel image, string? contentType, SectionModel section, int paragraphTopTwips, int paragraphHeightTwips)
+        {
+            (int widthTwips, int heightTwips) = ResolveImageDimensionsTwips(image, contentType);
+            int leftTwips = 0;
+            int topTwips = 0;
+
+            if (image.LayoutType == ImageLayoutType.Floating)
+            {
+                leftTwips = ResolveAlignedPositionTwips(
+                    image.HorizontalAlignment,
+                    image.HorizontalRelativeTo,
+                    image.PositionXTwips,
+                    widthTwips,
+                    section.PageWidth,
+                    section.MarginLeft,
+                    section.MarginRight,
+                    isHorizontal: true);
+
+                topTwips = ResolveAlignedPositionTwips(
+                    image.VerticalAlignment,
+                    image.VerticalRelativeTo,
+                    image.PositionYTwips,
+                    heightTwips,
+                    section.PageHeight,
+                    section.MarginTop,
+                    section.MarginBottom,
+                    isHorizontal: false,
+                    paragraphStartTwips: paragraphTopTwips,
+                    paragraphExtentTwips: paragraphHeightTwips);
+            }
+
+            return (leftTwips, topTwips, leftTwips + widthTwips, topTwips + heightTwips);
+        }
+
+        private static int EstimateParagraphContentHeightTwips(ParagraphModel paragraph, int availableWidthTwips)
+        {
+            int maxFontSizeHalfPoints = 24;
+            foreach (var run in paragraph.Runs)
+            {
+                if (run.Properties.FontSize.HasValue)
+                {
+                    maxFontSizeHalfPoints = Math.Max(maxFontSizeHalfPoints, run.Properties.FontSize.Value);
+                }
+            }
+
+            int baseLineHeightTwips = (maxFontSizeHalfPoints * 10) + 40;
+            int lineHeightTwips = Math.Max(276, (baseLineHeightTwips * 115 + 99) / 100);
+            if (paragraph.Properties.LineSpacing.HasValue)
+            {
+                string rule = paragraph.Properties.LineSpacingRule ?? "auto";
+                if (string.Equals(rule, "exact", StringComparison.OrdinalIgnoreCase))
+                {
+                    lineHeightTwips = Math.Max(1, paragraph.Properties.LineSpacing.Value);
+                }
+                else if (string.Equals(rule, "atLeast", StringComparison.OrdinalIgnoreCase))
+                {
+                    lineHeightTwips = Math.Max(lineHeightTwips, paragraph.Properties.LineSpacing.Value);
+                }
+                else
+                {
+                    double multiplier = Math.Max(1d / 240d, paragraph.Properties.LineSpacing.Value / 240d);
+                    lineHeightTwips = Math.Max(1, (int)Math.Round(lineHeightTwips * multiplier, MidpointRounding.AwayFromZero));
+                }
+            }
+
+            int estimatedLineCount = EstimateParagraphLineCount(paragraph, maxFontSizeHalfPoints, availableWidthTwips);
+            return Math.Max(lineHeightTwips, lineHeightTwips * estimatedLineCount);
+        }
+
+        private static int ResolveParagraphAvailableWidthTwips(ParagraphModel paragraph, int baseAvailableWidthTwips)
+        {
+            int indentWidthTwips = Math.Max(0, paragraph.Properties.LeftIndentTwips)
+                + Math.Max(0, paragraph.Properties.RightIndentTwips)
+                + Math.Max(0, paragraph.Properties.FirstLineIndentTwips);
+
+            return Math.Max(720, baseAvailableWidthTwips - indentWidthTwips);
+        }
+
+        private static int ResolveTableCellWidth(TableModel table, int gridColumnIndex, int gridSpan, int fallbackWidthTwips)
+        {
+            if (table.GridColumnWidths.Count == 0)
+            {
+                return fallbackWidthTwips;
+            }
+
+            int span = Math.Max(1, gridSpan);
+            int widthTwips = 0;
+            for (int index = 0; index < span; index++)
+            {
+                int currentGridIndex = gridColumnIndex + index;
+                if (currentGridIndex >= 0 && currentGridIndex < table.GridColumnWidths.Count)
+                {
+                    widthTwips += table.GridColumnWidths[currentGridIndex];
+                }
+            }
+
+            return widthTwips > 0 ? widthTwips : fallbackWidthTwips;
+        }
+
+        private static int ResolveTableCellHorizontalPaddingTwips(TableModel table, TableCellModel cell)
+        {
+            int leftPaddingTwips = cell.PaddingLeftTwips > 0 ? cell.PaddingLeftTwips : table.DefaultCellPaddingLeftTwips;
+            int rightPaddingTwips = cell.PaddingRightTwips > 0 ? cell.PaddingRightTwips : table.DefaultCellPaddingRightTwips;
+            return Math.Max(0, leftPaddingTwips) + Math.Max(0, rightPaddingTwips);
+        }
+
+        private static int EstimateParagraphLineCount(ParagraphModel paragraph, int maxFontSizeHalfPoints, int availableWidthTwips)
+        {
+            int textLength = 0;
+            foreach (var run in paragraph.Runs)
+            {
+                if (!string.IsNullOrEmpty(run.Text))
+                {
+                    textLength += run.Text.Length;
+                }
+            }
+
+            if (textLength <= 0 || availableWidthTwips <= 0)
+            {
+                return 1;
+            }
+
+            int averageCharacterWidthTwips = Math.Max(60, (maxFontSizeHalfPoints * 11 + 1) / 2);
+            int charactersPerLine = Math.Max(1, availableWidthTwips / averageCharacterWidthTwips);
+            return Math.Max(1, (textLength + charactersPerLine - 1) / charactersPerLine);
+        }
+
+        private static int EstimateParagraphAdvanceTwips(ParagraphModel paragraph, int paragraphContentHeightTwips)
+        {
+            return paragraph.Properties.SpacingBeforeTwips + paragraphContentHeightTwips + paragraph.Properties.SpacingAfterTwips;
+        }
+
+        private static int BuildFloatingLayoutFlags(OfficeArtPictureDescriptor picture)
+        {
+            int flags = (int)picture.WrapType & 0x07;
+            if (picture.BehindText)
+            {
+                flags |= 1 << 3;
+            }
+
+            if (picture.AllowOverlap)
+            {
+                flags |= 1 << 4;
+            }
+
+            flags |= EncodeRelativeTo(picture.VerticalRelativeTo) << 5;
+            flags |= EncodeRelativeTo(picture.HorizontalRelativeTo) << 7;
+
+            return flags;
+        }
+
+        private static int EncodeRelativeTo(string? relativeTo)
+        {
+            if (string.Equals(relativeTo, "margin", StringComparison.OrdinalIgnoreCase))
+            {
+                return 1;
+            }
+
+            if (string.Equals(relativeTo, "paragraph", StringComparison.OrdinalIgnoreCase))
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+
+        private static int ResolveAlignedPositionTwips(
+            string? alignment,
+            string? relativeTo,
+            int offsetTwips,
+            int sizeTwips,
+            int pageExtentTwips,
+            int leadingMarginTwips,
+            int trailingMarginTwips,
+            bool isHorizontal,
+            int paragraphStartTwips = 0,
+            int paragraphExtentTwips = 0)
+        {
+            if (string.Equals(relativeTo, "paragraph", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!isHorizontal && !string.IsNullOrWhiteSpace(alignment))
+                {
+                    return ResolveAlignmentWithinAnchor(paragraphStartTwips, paragraphExtentTwips, sizeTwips, alignment, isHorizontal);
+                }
+
+                if (!isHorizontal)
+                {
+                    return paragraphStartTwips + offsetTwips;
+                }
+
+                return offsetTwips;
+            }
+
+            if (!string.IsNullOrWhiteSpace(alignment))
+            {
+                return ResolveAlignmentPositionTwips(alignment, relativeTo, sizeTwips, pageExtentTwips, leadingMarginTwips, trailingMarginTwips, isHorizontal);
+            }
+
+            return offsetTwips;
+        }
+
+        private static int ResolveAlignmentWithinAnchor(int anchorStart, int anchorExtent, int sizeTwips, string alignment, bool isHorizontal)
+        {
+            int safeExtent = Math.Max(0, anchorExtent);
+            int centerPosition = anchorStart + Math.Max(0, (safeExtent - sizeTwips) / 2);
+            int endPosition = anchorStart + Math.Max(0, safeExtent - sizeTwips);
+            string normalizedAlignment = alignment.Trim().ToLowerInvariant();
+
+            return normalizedAlignment switch
+            {
+                "left" when isHorizontal => anchorStart,
+                "inside" when isHorizontal => anchorStart,
+                "right" when isHorizontal => endPosition,
+                "outside" when isHorizontal => endPosition,
+                "center" => centerPosition,
+                "top" when !isHorizontal => anchorStart,
+                "bottom" when !isHorizontal => endPosition,
+                _ => anchorStart
+            };
+        }
+
+        private static int ResolveAlignmentPositionTwips(
+            string alignment,
+            string? relativeTo,
+            int sizeTwips,
+            int pageExtentTwips,
+            int leadingMarginTwips,
+            int trailingMarginTwips,
+            bool isHorizontal)
+        {
+            int anchorStart;
+            int anchorExtent;
+            if (string.Equals(relativeTo, "margin", StringComparison.OrdinalIgnoreCase))
+            {
+                anchorStart = leadingMarginTwips;
+                anchorExtent = Math.Max(0, pageExtentTwips - leadingMarginTwips - trailingMarginTwips);
+            }
+            else
+            {
+                anchorStart = 0;
+                anchorExtent = Math.Max(0, pageExtentTwips);
+            }
+
+            string normalizedAlignment = alignment.Trim().ToLowerInvariant();
+            int centerPosition = anchorStart + Math.Max(0, (anchorExtent - sizeTwips) / 2);
+            int endPosition = anchorStart + Math.Max(0, anchorExtent - sizeTwips);
+
+            return normalizedAlignment switch
+            {
+                "left" when isHorizontal => anchorStart,
+                "inside" when isHorizontal => anchorStart,
+                "right" when isHorizontal => endPosition,
+                "outside" when isHorizontal => endPosition,
+                "center" => centerPosition,
+                "top" when !isHorizontal => anchorStart,
+                "bottom" when !isHorizontal => endPosition,
+                _ => anchorStart
+            };
+        }
+
+        private static bool TryGetImageDimensionsTwipsFromPayload(byte[]? imageData, string? contentType, out int widthTwips, out int heightTwips)
+        {
+            widthTwips = 1;
+            heightTwips = 1;
+
+            if (imageData == null || imageData.Length == 0)
+            {
+                return false;
+            }
+
+            return contentType switch
+            {
+                "image/x-wmf" => TryGetWmfDimensionsTwips(imageData, out widthTwips, out heightTwips),
+                "image/x-emf" => TryGetEmfDimensionsTwips(imageData, out widthTwips, out heightTwips),
+                _ => false
+            };
+        }
+
+        private static bool TryGetWmfDimensionsTwips(byte[] imageData, out int widthTwips, out int heightTwips)
+        {
+            widthTwips = 1;
+            heightTwips = 1;
+
+            if (!HasWmfPlaceableHeader(imageData) || imageData.Length < 22)
+            {
+                return false;
+            }
+
+            int left = BitConverter.ToInt16(imageData, 6);
+            int top = BitConverter.ToInt16(imageData, 8);
+            int right = BitConverter.ToInt16(imageData, 10);
+            int bottom = BitConverter.ToInt16(imageData, 12);
+            int unitsPerInch = BitConverter.ToUInt16(imageData, 14);
+
+            if (unitsPerInch <= 0 || right <= left || bottom <= top)
+            {
+                return false;
+            }
+
+            widthTwips = Math.Max(1, (int)Math.Round((right - left) * 1440d / unitsPerInch));
+            heightTwips = Math.Max(1, (int)Math.Round((bottom - top) * 1440d / unitsPerInch));
+            return true;
+        }
+
+        private static bool TryGetEmfDimensionsTwips(byte[] imageData, out int widthTwips, out int heightTwips)
+        {
+            widthTwips = 1;
+            heightTwips = 1;
+
+            if (imageData.Length < 40)
+            {
+                return false;
+            }
+
+            int frameLeft = BitConverter.ToInt32(imageData, 24);
+            int frameTop = BitConverter.ToInt32(imageData, 28);
+            int frameRight = BitConverter.ToInt32(imageData, 32);
+            int frameBottom = BitConverter.ToInt32(imageData, 36);
+
+            if (frameRight <= frameLeft || frameBottom <= frameTop)
+            {
+                return false;
+            }
+
+            widthTwips = Math.Max(1, (int)Math.Round((frameRight - frameLeft) * 72d / 127d));
+            heightTwips = Math.Max(1, (int)Math.Round((frameBottom - frameTop) * 72d / 127d));
+            return true;
+        }
+
+        private static int ConvertTwipsToMm100(int twips)
+        {
+            return (int)Math.Round(twips * 127d / 72d);
+        }
+
+        private static int ConvertTwipsToEmu(int twips)
+        {
+            return twips * 635;
+        }
+
+        private static short ClampToShort(int value)
+        {
+            return (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, value));
         }
 
         private void WriteNumbering(BinaryWriter writer, DocumentModel model)
@@ -583,10 +1813,80 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add(0x03); sprms.Add(0x24); sprms.Add((byte)props.Alignment);
             }
 
+            AppendParagraphFormattingSprms(sprms, props);
+
             return sprms.ToArray();
         }
 
+        private static void AppendParagraphFormattingSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
+        {
+            AppendParagraphIndentSprms(sprms, props);
+            AppendParagraphSpacingSprms(sprms, props);
+        }
+
+        private static void AppendParagraphIndentSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
+        {
+            if (props.RightIndentTwips != 0)
+            {
+                sprms.Add(0x0E);
+                sprms.Add(0x84);
+                short rightIndent = ClampToShort(props.RightIndentTwips);
+                sprms.Add((byte)(rightIndent & 0xFF));
+                sprms.Add((byte)((rightIndent >> 8) & 0xFF));
+            }
+
+            if (props.LeftIndentTwips != 0)
+            {
+                sprms.Add(0x0F);
+                sprms.Add(0x84);
+                short leftIndent = ClampToShort(props.LeftIndentTwips);
+                sprms.Add((byte)(leftIndent & 0xFF));
+                sprms.Add((byte)((leftIndent >> 8) & 0xFF));
+            }
+
+            if (props.FirstLineIndentTwips != 0)
+            {
+                sprms.Add(0x11);
+                sprms.Add(0x84);
+                short firstLineIndent = ClampToShort(props.FirstLineIndentTwips);
+                sprms.Add((byte)(firstLineIndent & 0xFF));
+                sprms.Add((byte)((firstLineIndent >> 8) & 0xFF));
+            }
+        }
+
+        private static void AppendParagraphSpacingSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
+        {
+            if (props.SpacingBeforeTwips > 0)
+            {
+                sprms.Add(0x22);
+                sprms.Add(0x26);
+                sprms.Add((byte)(props.SpacingBeforeTwips & 0xFF));
+                sprms.Add((byte)((props.SpacingBeforeTwips >> 8) & 0xFF));
+            }
+
+            if (props.SpacingAfterTwips > 0)
+            {
+                sprms.Add(0x23);
+                sprms.Add(0x26);
+                sprms.Add((byte)(props.SpacingAfterTwips & 0xFF));
+                sprms.Add((byte)((props.SpacingAfterTwips >> 8) & 0xFF));
+            }
+
+            if (props.LineSpacing.HasValue)
+            {
+                sprms.Add(0x24);
+                sprms.Add(0x26);
+                sprms.Add((byte)(props.LineSpacing.Value & 0xFF));
+                sprms.Add((byte)((props.LineSpacing.Value >> 8) & 0xFF));
+            }
+        }
+
         private byte[] BuildChpxFromStyle(RunModel.CharacterProperties props)
+        {
+            return BuildRunSprms(props);
+        }
+
+        private byte[] BuildRunSprms(RunModel.CharacterProperties props)
         {
             var sprms = new List<byte>();
 
