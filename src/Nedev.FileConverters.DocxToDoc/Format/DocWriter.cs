@@ -81,13 +81,20 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int currentCp = 0;
             var tableWriter = new BinaryWriter(tableStream);
 
-            void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips)
+            void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips, int? maxVisibleCursorTwips = null)
             {
                 int paraStart = currentCp;
                 int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(para, availableWidthTwips);
                 int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(para, paragraphAvailableWidthTwips);
-                int paragraphAdvanceTwips = EstimateParagraphAdvanceTwips(para, paragraphContentHeightTwips);
                 int paragraphTopTwips = verticalCursorTwips + para.Properties.SpacingBeforeTwips;
+
+                if (maxVisibleCursorTwips.HasValue)
+                {
+                    int maxAllowedHeight = Math.Max(0, maxVisibleCursorTwips.Value - paragraphTopTwips);
+                    paragraphContentHeightTwips = Math.Min(paragraphContentHeightTwips, maxAllowedHeight);
+                }
+
+                int paragraphAdvanceTwips = EstimateParagraphAdvanceTwips(para, paragraphContentHeightTwips);
                 var autoCompletedFields = new HashSet<FieldModel>();
                 var separatedFields = new HashSet<FieldModel>();
                 var openFields = new List<FieldModel>();
@@ -284,7 +291,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         return;
                     }
 
-                    byte[] runSprms = BuildRunSprms(runModel.Properties);
+                    byte[] runSprms = BuildRunSprms(runModel.Properties, model.Fonts);
                     if (runSprms.Length > 0)
                     {
                         chpxWriter.AddRun(currentCp, currentCp + runModel.Text.Length, runSprms);
@@ -482,7 +489,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
                             foreach (var cellPara in cellLayout.cell.Paragraphs)
                             {
-                                ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips);
+                                ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips, row.HeightRule == TableRowHeightRule.Exact ? maxVisibleCursorTwips : null);
                                 if (row.HeightRule == TableRowHeightRule.Exact)
                                 {
                                     cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
@@ -590,7 +597,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             // 7. Build Style Sheet (STSH)
             int fcStshf = (int)tableStream.Position;
-            WriteStyleSheet(tableWriter, model.Styles);
+            WriteStyleSheet(tableWriter, model.Styles, model.Fonts);
             int lcbStshf = (int)tableStream.Position - fcStshf;
 
             // 8. Write Numbering (SttbLst and PlcfLfo)
@@ -1560,9 +1567,27 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
 
                 int fallbackPoolTwips = Math.Max(0, targetTableWidthTwips - resolvedWidthSumTwips);
+                var cellContentWidthsTwips = new List<int>(widthsTwips.Count);
+                int totalUnresolvedContentWidthTwips = 0;
+                for (int index = 0; index < widthsTwips.Count; index++)
+                {
+                    if (widthsTwips[index] > 0)
+                    {
+                        cellContentWidthsTwips.Add(0);
+                    }
+                    else
+                    {
+                        int estimatedContentWidth = EstimateTableCellContentWidthTwips(row.Cells[index]);
+                        cellContentWidthsTwips.Add(Math.Max(1, estimatedContentWidth));
+                        totalUnresolvedContentWidthTwips += Math.Max(1, estimatedContentWidth);
+                    }
+                }
+
                 int assignedFallbackTwips = 0;
                 int remainingUnresolvedSpan = unresolvedSpanSum;
                 int remainingUnresolvedCells = unresolvedCellCount;
+                int assignedExtraTwips = 0;
+
                 for (int index = 0; index < widthsTwips.Count; index++)
                 {
                     if (widthsTwips[index] > 0)
@@ -1573,10 +1598,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     int span = spans[index];
                     int minimumWidthTwips = minimumAutoWidthsTwips[index];
                     int distributablePoolTwips = Math.Max(0, fallbackPoolTwips - reservedMinimumAutoWidthTwips);
-                    int extraWidthTwips = remainingUnresolvedSpan > 0
+                    int contentWidth = cellContentWidthsTwips[index];
+
+                    int extraWidthTwips = remainingUnresolvedCells > 0
                         ? (remainingUnresolvedCells == 1
-                            ? distributablePoolTwips - Math.Max(0, assignedFallbackTwips - (reservedMinimumAutoWidthTwips - minimumWidthTwips))
-                            : (int)Math.Round(distributablePoolTwips * (span / (double)unresolvedSpanSum), MidpointRounding.AwayFromZero))
+                            ? Math.Max(0, distributablePoolTwips - assignedExtraTwips)
+                            : (int)Math.Round(distributablePoolTwips * (contentWidth / (double)totalUnresolvedContentWidthTwips), MidpointRounding.AwayFromZero))
                         : 0;
 
                     int widthTwips = minimumWidthTwips + Math.Max(0, extraWidthTwips);
@@ -1584,6 +1611,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     widthTwips = Math.Max(1, widthTwips);
                     widthsTwips[index] = widthTwips;
                     assignedFallbackTwips += widthTwips;
+                    assignedExtraTwips += Math.Max(0, extraWidthTwips);
                     remainingUnresolvedSpan -= span;
                     remainingUnresolvedCells -= 1;
                 }
@@ -1843,7 +1871,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (currentLeft >= 0 && prevRight >= 0)
             {
-                return Math.Max(currentLeft, prevRight);
+                return ShouldOverrideBorder(currentLeft, cell.BorderLeftStyle, prevRight, previousCell!.BorderRightStyle) ? currentLeft : prevRight;
             }
             else if (currentLeft >= 0)
             {
@@ -1916,7 +1944,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (currentTop >= 0 && prevBottomVal >= 0)
             {
-                return Math.Max(currentTop, prevBottomVal);
+                return ShouldOverrideBorder(currentTop, cell.BorderTopStyle, prevBottomVal, previousBottom.style) ? currentTop : prevBottomVal;
             }
             else if (currentTop >= 0)
             {
@@ -1971,15 +1999,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             };
         }
 
-        private static (int widthTwips, bool hasExplicitOverride) ResolvePreviousRowBottomBorder(TableRowModel? previousRow, int startColumnIndex, int span)
+        private static (int widthTwips, BorderStyle style, bool hasExplicitOverride) ResolvePreviousRowBottomBorder(TableRowModel? previousRow, int startColumnIndex, int span)
         {
             if (previousRow == null)
             {
-                return (0, false);
+                return (0, BorderStyle.None, false);
             }
 
             int currentColumnIndex = 0;
-            int maxBottomBorderTwips = 0;
+            int selectedWidthTwips = -1;
+            BorderStyle selectedStyle = BorderStyle.None;
             bool hasExplicitOverride = false;
             foreach (var previousCell in previousRow.Cells)
             {
@@ -1992,14 +2021,40 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     if (HasExplicitBottomBorder(previousCell))
                     {
                         hasExplicitOverride = true;
-                        maxBottomBorderTwips = Math.Max(maxBottomBorderTwips, Math.Max(0, previousCell.BorderBottomTwips));
+                        int width = Math.Max(0, previousCell.BorderBottomTwips);
+                        if (selectedWidthTwips < 0 || ShouldOverrideBorder(width, previousCell.BorderBottomStyle, selectedWidthTwips, selectedStyle))
+                        {
+                            selectedWidthTwips = width;
+                            selectedStyle = previousCell.BorderBottomStyle;
+                        }
                     }
                 }
 
                 currentColumnIndex = previousEndColumnIndex;
             }
 
-            return (maxBottomBorderTwips, hasExplicitOverride);
+            return (Math.Max(0, selectedWidthTwips), selectedStyle, hasExplicitOverride);
+        }
+
+        private static bool ShouldOverrideBorder(int widthA, BorderStyle styleA, int widthB, BorderStyle styleB)
+        {
+            if (widthA > widthB) return true;
+            if (widthA < widthB) return false;
+
+            return GetBorderStylePrecedence(styleA) > GetBorderStylePrecedence(styleB);
+        }
+
+        private static int GetBorderStylePrecedence(BorderStyle style)
+        {
+            return style switch
+            {
+                BorderStyle.Double => 5,
+                BorderStyle.Single => 4,
+                BorderStyle.Dashed => 3,
+                BorderStyle.Dotted => 2,
+                BorderStyle.Other => 1,
+                _ => 0
+            };
         }
 
         private static bool HasExplicitLeftBorder(TableCellModel cell)
@@ -2055,48 +2110,134 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return contentHeightTwips;
         }
 
+        private static int EstimateTableCellContentWidthTwips(TableCellModel cell)
+        {
+            int maxContentWidth = 0;
+            foreach (var paragraph in cell.Paragraphs)
+            {
+                int currentWidth = 0;
+                foreach (var run in paragraph.Runs)
+                {
+                    int runFontSizeHalfPoints = run.Properties.FontSize.GetValueOrDefault(24);
+                    int runFontSizeTwips = Math.Max(120, runFontSizeHalfPoints * 10);
+                    double runStyleMultiplier = 1.0;
+                    if (run.Properties.IsBold) runStyleMultiplier *= 1.1;
+                    if (run.Properties.IsItalic) runStyleMultiplier *= 1.02;
+
+                    bool isMonospace = string.Equals(run.Properties.FontName, "Courier New", StringComparison.OrdinalIgnoreCase) || 
+                                       string.Equals(run.Properties.FontName, "Consolas", StringComparison.OrdinalIgnoreCase);
+
+                    string text = run.Text ?? string.Empty;
+                    foreach (char c in text)
+                    {
+                        double baseWidth = EstimateCharacterWidthTwips(c, runFontSizeTwips, isMonospace);
+                        currentWidth += (int)Math.Round(baseWidth * runStyleMultiplier, MidpointRounding.AwayFromZero);
+                    }
+
+                    if (run.Image != null && run.Image.LayoutType == ImageLayoutType.Inline)
+                    {
+                        currentWidth += Math.Max(960, run.Image.Width * 15);
+                    }
+                }
+
+                currentWidth += Math.Max(0, paragraph.Properties.LeftIndentTwips) + Math.Max(0, paragraph.Properties.RightIndentTwips);
+                maxContentWidth = Math.Max(maxContentWidth, currentWidth);
+            }
+
+            return maxContentWidth;
+        }
+
         private static int EstimateParagraphLineCount(ParagraphModel paragraph, int maxFontSizeHalfPoints, int availableWidthTwips)
         {
-            int estimatedTextWidthTwips = 0;
+            if (availableWidthTwips <= 0) return 1;
+
+            int currentLineWidthTwips = 0;
+            int lineCount = 1;
+
             foreach (var run in paragraph.Runs)
             {
-                if (!string.IsNullOrEmpty(run.Text))
+                int runFontSizeHalfPoints = run.Properties.FontSize.GetValueOrDefault(maxFontSizeHalfPoints);
+                int runFontSizeTwips = Math.Max(120, runFontSizeHalfPoints * 10);
+                double runStyleMultiplier = 1.0;
+                if (run.Properties.IsBold) runStyleMultiplier *= 1.1;
+                if (run.Properties.IsItalic) runStyleMultiplier *= 1.02;
+
+                bool isMonospace = string.Equals(run.Properties.FontName, "Courier New", StringComparison.OrdinalIgnoreCase) || 
+                                   string.Equals(run.Properties.FontName, "Consolas", StringComparison.OrdinalIgnoreCase);
+
+                string text = run.Text ?? string.Empty;
+                int i = 0;
+                while (i < text.Length)
                 {
-                    estimatedTextWidthTwips += EstimateRunTextWidthTwips(run, maxFontSizeHalfPoints);
+                    char c = text[i];
+                    if (c == '\n' || c == '\r')
+                    {
+                        lineCount++;
+                        currentLineWidthTwips = 0;
+                        if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++; 
+                        i++;
+                        continue;
+                    }
+
+                    int wordWidthTwips = 0;
+                    bool isWhitespace = char.IsWhiteSpace(c);
+
+                    while (i < text.Length)
+                    {
+                        char wc = text[i];
+                        if (wc == '\n' || wc == '\r') break;
+
+                        bool currentIsWhitespace = char.IsWhiteSpace(wc);
+                        if (currentIsWhitespace != isWhitespace && wordWidthTwips > 0) break;
+                        
+                        bool isCjk = (wc >= 0x4E00 && wc <= 0x9FFF) || (wc >= 0x3040 && wc <= 0x30FF) || (wc >= 0xAC00 && wc <= 0xD7AF);
+                        if (isCjk)
+                        {
+                            if (wordWidthTwips > 0) break;
+                            
+                            double bw = EstimateCharacterWidthTwips(wc, runFontSizeTwips, isMonospace);
+                            wordWidthTwips = (int)Math.Round(bw * runStyleMultiplier, MidpointRounding.AwayFromZero);
+                            i++;
+                            break;
+                        }
+
+                        double baseWidth = EstimateCharacterWidthTwips(wc, runFontSizeTwips, isMonospace);
+                        wordWidthTwips += (int)Math.Round(baseWidth * runStyleMultiplier, MidpointRounding.AwayFromZero);
+                        i++;
+                    }
+
+                    if (wordWidthTwips > 0)
+                    {
+                        if (currentLineWidthTwips + wordWidthTwips > availableWidthTwips)
+                        {
+                            if (wordWidthTwips > availableWidthTwips)
+                            {
+                                if (currentLineWidthTwips > 0)
+                                {
+                                    lineCount++;
+                                }
+                                lineCount += wordWidthTwips / availableWidthTwips;
+                                currentLineWidthTwips = wordWidthTwips % availableWidthTwips;
+                            }
+                            else if (currentLineWidthTwips > 0 && !isWhitespace)
+                            {
+                                lineCount++;
+                                currentLineWidthTwips = wordWidthTwips;
+                            }
+                            else
+                            {
+                                currentLineWidthTwips += wordWidthTwips;
+                            }
+                        }
+                        else
+                        {
+                            currentLineWidthTwips += wordWidthTwips;
+                        }
+                    }
                 }
             }
 
-            if (estimatedTextWidthTwips <= 0 || availableWidthTwips <= 0)
-            {
-                return 1;
-            }
-
-            // Word wrapping inefficiency factor: paragraphs rarely fill 100% of line width due to ragged right margins.
-            int adjustedTextWidthTwips = (int)Math.Round(estimatedTextWidthTwips * 1.05d, MidpointRounding.AwayFromZero);
-
-            return Math.Max(1, (adjustedTextWidthTwips + availableWidthTwips - 1) / availableWidthTwips);
-        }
-
-        private static int EstimateRunTextWidthTwips(RunModel run, int fallbackFontSizeHalfPoints)
-        {
-            int fontSizeHalfPoints = run.Properties.FontSize.GetValueOrDefault(fallbackFontSizeHalfPoints);
-            int fontSizeTwips = Math.Max(120, fontSizeHalfPoints * 10);
-            
-            double runStyleMultiplier = 1.0;
-            if (run.Properties.IsBold) runStyleMultiplier *= 1.1;
-            if (run.Properties.IsItalic) runStyleMultiplier *= 1.02;
-
-            bool isMonospace = string.Equals(run.Properties.FontName, "Courier New", StringComparison.OrdinalIgnoreCase) || 
-                               string.Equals(run.Properties.FontName, "Consolas", StringComparison.OrdinalIgnoreCase);
-
-            int widthTwips = 0;
-            foreach (char character in run.Text)
-            {
-                double baseWidth = EstimateCharacterWidthTwips(character, fontSizeTwips, isMonospace);
-                widthTwips += (int)Math.Round(baseWidth * runStyleMultiplier, MidpointRounding.AwayFromZero);
-            }
-
-            return widthTwips;
+            return lineCount;
         }
 
         private static double EstimateCharacterWidthTwips(char character, int fontSizeTwips, bool isMonospace)
@@ -2108,16 +2249,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             double widthFactor = character switch
             {
-                ' ' or '\t' => 0.28d,
-                '.' or ',' or ';' or ':' or '!' or '|' or '\'' or '"' => 0.28d,
-                'i' or 'l' or 'j' => 0.28d,
-                'I' or '[' or ']' or '(' or ')' => 0.33d,
-                'f' or 't' or 'r' => 0.38d,
-                'm' or 'w' or 'M' or 'W' or 'O' or 'Q' => 0.82d,
-                _ when char.IsUpper(character) => 0.65d,
+                'i' or 'l' or 'j' or '.' or ',' or ';' or ':' or '!' or '|' or '\'' or '`' => 0.25d,
+                ' ' or '\t' or '"' or 't' or 'r' or 'I' or '[' or ']' or '(' or ')' or '{' or '}' => 0.33d,
+                'f' or 's' or 'c' or 'z' or 'J' => 0.42d,
+                'a' or 'b' or 'd' or 'e' or 'g' or 'h' or 'k' or 'n' or 'o' or 'p' or 'q' or 'u' or 'v' or 'x' or 'y' => 0.52d,
+                'm' or 'w' => 0.78d,
+                'M' or 'W' or 'O' or 'Q' or 'D' or 'N' => 0.82d,
                 _ when char.IsDigit(character) => 0.55d,
+                _ when char.IsUpper(character) => 0.65d,
                 _ when character >= 0x4E00 && character <= 0x9FFF => 1.0d,
-                _ when character >= 0x2E80 => 1.0d,
+                _ when character >= 0x3040 && character <= 0x30FF => 1.0d,
+                _ when character >= 0xAC00 && character <= 0xD7AF => 1.0d,
+                _ when character >= 0x2E80 && character <= 0x2EFF => 1.0d,
                 _ => 0.52d
             };
 
@@ -2442,7 +2585,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
         }
 
-        private void WriteStyleSheet(BinaryWriter writer, List<Nedev.FileConverters.DocxToDoc.Model.StyleModel> styles)
+        private void WriteStyleSheet(BinaryWriter writer, List<Nedev.FileConverters.DocxToDoc.Model.StyleModel> styles, List<FontModel> fonts)
         {
             // STSH structure (Style Sheet)
             // STSHI header (Style Sheet Information)
@@ -2496,7 +2639,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 byte[]? chpxData = null;
                 if (style.CharacterProps != null)
                 {
-                    chpxData = BuildChpxFromStyle(style.CharacterProps);
+                    chpxData = BuildChpxFromStyle(style.CharacterProps, fonts);
                     cbStd += 1 + chpxData.Length; // cbGrpprlChpx + data
                 }
 
@@ -2611,12 +2754,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
         }
 
-        private byte[] BuildChpxFromStyle(RunModel.CharacterProperties props)
+        private byte[] BuildChpxFromStyle(RunModel.CharacterProperties props, List<FontModel> fonts)
         {
-            return BuildRunSprms(props);
+            return BuildRunSprms(props, fonts);
         }
 
-        private byte[] BuildRunSprms(RunModel.CharacterProperties props)
+        private byte[] BuildRunSprms(RunModel.CharacterProperties props, List<FontModel> fonts)
         {
             var sprms = new List<byte>();
 
@@ -2628,6 +2771,32 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add(0x43); sprms.Add(0x4A);
                 sprms.Add(BitConverter.GetBytes((short)props.FontSize.Value)[0]);
                 sprms.Add(BitConverter.GetBytes((short)props.FontSize.Value)[1]);
+            }
+
+            if (props.Underline != UnderlineType.None)
+            {
+                sprms.Add(0x3E); sprms.Add(0x2A);
+                sprms.Add(props.Underline switch
+                {
+                    UnderlineType.Single => 1,
+                    UnderlineType.Double => 3,
+                    UnderlineType.Dotted => 4,
+                    UnderlineType.Thick => 6,
+                    UnderlineType.Dashed => 7,
+                    UnderlineType.Wave => 11,
+                    _ => 0
+                });
+            }
+
+            if (!string.IsNullOrEmpty(props.FontName))
+            {
+                int fontIndex = fonts.FindIndex(f => string.Equals(f.Name, props.FontName, StringComparison.OrdinalIgnoreCase));
+                if (fontIndex >= 0)
+                {
+                    sprms.Add(0x4F); sprms.Add(0x4A); // sprmCRgFtc0
+                    sprms.Add((byte)(fontIndex & 0xFF));
+                    sprms.Add((byte)((fontIndex >> 8) & 0xFF));
+                }
             }
 
             return sprms.ToArray();

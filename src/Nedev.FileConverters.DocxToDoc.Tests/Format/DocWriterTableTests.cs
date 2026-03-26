@@ -167,6 +167,85 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithExactRowHeight_ClipsImagePosition()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel { HeightTwips = 1000, HeightRule = TableRowHeightRule.Exact };
+
+            var cell = new TableCellModel { Width = 5000 };
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel
+            {
+                Text = "Force large height",
+                Properties = { FontSize = 120 } // Very large font -> large paragraph height (approx 1500+ twips)
+            });
+            para.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = pngBytes,
+                    ContentType = "image/png",
+                    Width = 64,
+                    Height = 32,
+                    LayoutType = ImageLayoutType.Floating,
+                    VerticalAlignment = "center",
+                    VerticalRelativeTo = "paragraph"
+                }
+            });
+            cell.Paragraphs.Add(para);
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            try
+            {
+                writer.WriteDocBlocks(model, ms);
+                ms.Position = 0;
+
+                using var compoundFile = new OpenMcdf.CompoundFile(ms);
+                Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream), "WordDocument stream missing");
+                Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream), "1Table stream missing");
+                
+                var wordDocData = wordDocStream.GetData();
+                var tableData = tableStream.GetData();
+
+                // Find spaMom (floating positions) - offset into 1Table
+                int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+                int lcbPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8) + 4);
+                
+                Assert.NotEqual(0, fcPlcfspaMom);
+                Assert.True(lcbPlcfspaMom > 0);
+
+                // PLCF SPA with 1 image: 2 CPs (8 bytes) + 1 FSPA record (26 bytes) = 34 bytes
+                // The record starts at fcPlcfspaMom + 8
+                int recordStart = fcPlcfspaMom + 8;
+                
+                // yaTop is at recordStart + 8 (after spid, xaLeft)
+                int topTwips = BitConverter.ToInt32(tableData, recordStart + 8);
+                
+                // Without clipping, a 480-twip image centered in a ~1500-twip paragraph would be at ~500.
+                // With 1000-twip clipping, it should be at (1000 - 480) / 2 = 260.
+                Assert.True(topTwips < 500, $"Top position ({topTwips}) should be clipped to row height context (~260-300).");
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Clipping test failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableRowsAdvanceDocumentCursorByTallestCell()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1222,7 +1301,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                 {
                     new RunModel
                     {
-                        Text = "This paragraph is long enough to wrap differently when an inside vertical border reduces the second cell width.",
+                        Text = "This paragraph is long enough to wrap differently when an inside vertical border reduces the second cell width. Adding extra words to hit the wrapper boundary reliably.",
                         Properties =
                         {
                             FontSize = 24
