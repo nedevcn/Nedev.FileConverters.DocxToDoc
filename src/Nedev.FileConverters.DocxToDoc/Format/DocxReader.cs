@@ -105,6 +105,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 ParseComments(commentsStream, docModel);
             }
 
+            // Parse VBA Project
+            var vbaEntry = _archive.GetEntry("word/vbaProject.bin");
+            if (vbaEntry != null)
+            {
+                using var vbaStream = vbaEntry.Open();
+                using var ms = new MemoryStream();
+                vbaStream.CopyTo(ms);
+                docModel.VbaProjectData = ms.ToArray();
+            }
+
             StringBuilder textBuffer = new StringBuilder();
 
             Nedev.FileConverters.DocxToDoc.Model.ParagraphModel currentParagraph = null;
@@ -119,6 +129,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             bool insideTableBorders = false;
             bool insideCellBorders = false;
             var openFields = new Stack<Nedev.FileConverters.DocxToDoc.Model.FieldModel>();
+            bool inIns = false;
+            bool inDel = false;
+            bool inOMath = false;
 
             while (xmlReader.Read())
             {
@@ -251,7 +264,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         currentTable.DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips;
                         currentTable.DefaultInsideVerticalBorderStyle = insideVStyle;
                     }
-                    else if ((localName == "left" || localName == "start") && TryReadBorderWidthTwips(xmlReader, out int leftBorderTwips, out var leftStyle))
+                    else if ((localName == "left" || localName == "start") && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(xmlReader, out int leftBorderTwips, out var leftStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
@@ -265,7 +278,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentTable.DefaultBorderLeftStyle = leftStyle;
                         }
                     }
-                    else if ((localName == "right" || localName == "end") && TryReadBorderWidthTwips(xmlReader, out int rightBorderTwips, out var rightStyle))
+                    else if ((localName == "right" || localName == "end") && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(xmlReader, out int rightBorderTwips, out var rightStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
@@ -279,7 +292,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentTable.DefaultBorderRightStyle = rightStyle;
                         }
                     }
-                    else if (localName == "top" && TryReadBorderWidthTwips(xmlReader, out int topBorderTwips, out var topStyle))
+                    else if (localName == "top" && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(xmlReader, out int topBorderTwips, out var topStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
@@ -293,7 +306,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentTable.DefaultBorderTopStyle = topStyle;
                         }
                     }
-                    else if (localName == "bottom" && TryReadBorderWidthTwips(xmlReader, out int bottomBorderTwips, out var bottomStyle))
+                    else if (localName == "bottom" && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(xmlReader, out int bottomBorderTwips, out var bottomStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
@@ -483,9 +496,34 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentParagraph.Properties.FirstLineIndentTwips = -hanging;
                         }
                     }
+                    else if (localName == "ins")
+                    {
+                        inIns = true;
+                    }
+                    else if (localName == "del")
+                    {
+                        inDel = true;
+                    }
+                    else if (localName == "oMath" || localName == "oMathPara")
+                    {
+                        inOMath = true;
+                    }
                     else if (localName == "r" && currentParagraph != null)
                     {
                         currentRun = new Nedev.FileConverters.DocxToDoc.Model.RunModel();
+                        if (inIns)
+                        {
+                            currentRun.Properties.Underline = Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Single;
+                        }
+                        if (inDel)
+                        {
+                            currentRun.Properties.IsStrike = true;
+                        }
+                        if (inOMath)
+                        {
+                            currentRun.Properties.IsItalic = true;
+                            currentRun.Properties.FontName = "Cambria Math";
+                        }
                         currentParagraph.Runs.Add(currentRun);
                     }
                     else if (localName == "b" && currentRun != null)
@@ -610,7 +648,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         // Skip normal processing since we handled the content
                         continue;
                     }
-                    else if (localName == "t" && currentRun != null)
+                    else if ((localName == "t" || localName == "delText") && currentRun != null)
                     {
                         string text = xmlReader.ReadElementContentAsString();
                         currentRun.Text = text;
@@ -624,6 +662,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             currentRun.Image = image;
                             // Load actual image data
+                            LoadImageData(image);
+                        }
+                    }
+                    else if (localName == "pict" && currentRun != null)
+                    {
+                        // Parse fallback VML images (e.g., from SmartArt)
+                        var image = ParsePict(xmlReader);
+                        if (image != null)
+                        {
+                            currentRun.Image = image;
                             LoadImageData(image);
                         }
                     }
@@ -677,6 +725,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 else if (xmlReader.NodeType == XmlNodeType.EndElement)
                 {
                     string localName = xmlReader.LocalName;
+                    if (localName == "ins") inIns = false;
+                    else if (localName == "del") inDel = false;
+                    else if (localName == "oMath" || localName == "oMathPara") inOMath = false;
+
                     if (localName == "tbl")
                     {
                         currentTable = null;
@@ -1158,6 +1210,66 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             image.Height = height;
 
             return image;
+        }
+
+        private Nedev.FileConverters.DocxToDoc.Model.ImageModel? ParsePict(XmlReader reader)
+        {
+            var image = new Nedev.FileConverters.DocxToDoc.Model.ImageModel
+            {
+                LayoutType = Nedev.FileConverters.DocxToDoc.Model.ImageLayoutType.Inline,
+                WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.Inline
+            };
+            string? relId = null;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element)
+                {
+                    string localName = reader.LocalName;
+                    if (localName == "shape")
+                    {
+                        string? style = reader.GetAttribute("style");
+                        ParseShapeStyle(style, image);
+                    }
+                    else if (localName == "imagedata")
+                    {
+                        relId = reader.GetAttribute("r:id");
+                    }
+                }
+                else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "pict")
+                {
+                    break;
+                }
+                
+                if (reader.Depth < 3) break;
+            }
+
+            if (string.IsNullOrEmpty(relId)) return null;
+            image.RelationshipId = relId;
+            return image;
+        }
+
+        private static void ParseShapeStyle(string? style, Nedev.FileConverters.DocxToDoc.Model.ImageModel image)
+        {
+            if (string.IsNullOrWhiteSpace(style)) return;
+            var parts = style.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                var kv = part.Split(':', 2);
+                if (kv.Length == 2)
+                {
+                    string key = kv[0].Trim().ToLowerInvariant();
+                    string val = kv[1].Trim().ToLowerInvariant();
+                    if (key == "width" && val.EndsWith("pt") && double.TryParse(val.TrimEnd('p', 't'), out double w))
+                    {
+                        image.Width = (int)Math.Round(w * 96.0 / 72.0);
+                    }
+                    else if (key == "height" && val.EndsWith("pt") && double.TryParse(val.TrimEnd('p', 't'), out double h))
+                    {
+                        image.Height = (int)Math.Round(h * 96.0 / 72.0);
+                    }
+                }
+            }
         }
 
         private static int ConvertEmuToPixels(long value)

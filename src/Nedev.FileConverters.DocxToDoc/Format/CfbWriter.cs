@@ -29,6 +29,40 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             stream.SetData(data);
         }
 
+        public void EmbedStorage(string name, byte[] cfbData)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                throw new ArgumentNullException(nameof(name));
+            if (cfbData == null)
+                throw new ArgumentNullException(nameof(cfbData));
+
+            var targetStorage = _compoundFile.RootStorage.AddStorage(name);
+
+            using var ms = new MemoryStream(cfbData);
+            using var sourceCfb = new CompoundFile(ms);
+            
+            CopyStorage(sourceCfb.RootStorage, targetStorage);
+        }
+
+        private void CopyStorage(CFStorage source, CFStorage target)
+        {
+            source.VisitEntries(item =>
+            {
+                if (item.IsStream)
+                {
+                    var sourceStream = item as CFStream;
+                    var targetStream = target.AddStream(item.Name);
+                    targetStream.SetData(sourceStream.GetData());
+                }
+                else if (item.IsStorage)
+                {
+                    var sourceSubStorage = item as CFStorage;
+                    var targetSubStorage = target.AddStorage(item.Name);
+                    CopyStorage(sourceSubStorage, targetSubStorage);
+                }
+            }, false);
+        }
+
         public void WriteTo(Stream outputStream)
         {
             if (outputStream == null)

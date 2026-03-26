@@ -787,6 +787,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             cfbWriter.AddStream("1Table", tableStream.ToArray());
             cfbWriter.AddStream("Data", dataStream.ToArray());
             
+            if (model.VbaProjectData != null)
+            {
+                cfbWriter.EmbedStorage("Macros", model.VbaProjectData);
+            }
+
             // 9. Write out the final CFB to the destination
             cfbWriter.WriteTo(outputStream);
         }

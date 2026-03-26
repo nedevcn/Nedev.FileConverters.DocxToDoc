@@ -18,6 +18,11 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public List<CommentModel> Comments { get; } = new List<CommentModel>();
         public DocumentProperties Properties { get; } = new DocumentProperties();
 
+        /// <summary>
+        /// Raw VBA Macro project data extracted from vbaProject.bin.
+        /// </summary>
+        public byte[]? VbaProjectData { get; set; }
+
         // As the Document is parsed we will accumulate the plain text here
         // The length of this text will determine the Piece Table and CCP Text
         public string TextBuffer { get; set; } = string.Empty;
