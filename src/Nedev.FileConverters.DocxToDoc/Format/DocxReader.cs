@@ -241,60 +241,70 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         insideCellBorders = true;
                     }
-                    else if (localName == "insideH" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(xmlReader, out int insideHorizontalBorderTwips))
+                    else if (localName == "insideH" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(xmlReader, out int insideHorizontalBorderTwips, out var insideHStyle))
                     {
                         currentTable.DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips;
+                        currentTable.DefaultInsideHorizontalBorderStyle = insideHStyle;
                     }
-                    else if (localName == "insideV" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(xmlReader, out int insideVerticalBorderTwips))
+                    else if (localName == "insideV" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(xmlReader, out int insideVerticalBorderTwips, out var insideVStyle))
                     {
                         currentTable.DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips;
+                        currentTable.DefaultInsideVerticalBorderStyle = insideVStyle;
                     }
-                    else if ((localName == "left" || localName == "start") && TryReadBorderWidthTwips(xmlReader, out int leftBorderTwips))
+                    else if ((localName == "left" || localName == "start") && TryReadBorderWidthTwips(xmlReader, out int leftBorderTwips, out var leftStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
                             currentCell.HasLeftBorderOverride = true;
                             currentCell.BorderLeftTwips = leftBorderTwips;
+                            currentCell.BorderLeftStyle = leftStyle;
                         }
                         else if (insideTableBorders && currentTable != null)
                         {
                             currentTable.DefaultBorderLeftTwips = leftBorderTwips;
+                            currentTable.DefaultBorderLeftStyle = leftStyle;
                         }
                     }
-                    else if ((localName == "right" || localName == "end") && TryReadBorderWidthTwips(xmlReader, out int rightBorderTwips))
+                    else if ((localName == "right" || localName == "end") && TryReadBorderWidthTwips(xmlReader, out int rightBorderTwips, out var rightStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
                             currentCell.HasRightBorderOverride = true;
                             currentCell.BorderRightTwips = rightBorderTwips;
+                            currentCell.BorderRightStyle = rightStyle;
                         }
                         else if (insideTableBorders && currentTable != null)
                         {
                             currentTable.DefaultBorderRightTwips = rightBorderTwips;
+                            currentTable.DefaultBorderRightStyle = rightStyle;
                         }
                     }
-                    else if (localName == "top" && TryReadBorderWidthTwips(xmlReader, out int topBorderTwips))
+                    else if (localName == "top" && TryReadBorderWidthTwips(xmlReader, out int topBorderTwips, out var topStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
                             currentCell.HasTopBorderOverride = true;
                             currentCell.BorderTopTwips = topBorderTwips;
+                            currentCell.BorderTopStyle = topStyle;
                         }
                         else if (insideTableBorders && currentTable != null)
                         {
                             currentTable.DefaultBorderTopTwips = topBorderTwips;
+                            currentTable.DefaultBorderTopStyle = topStyle;
                         }
                     }
-                    else if (localName == "bottom" && TryReadBorderWidthTwips(xmlReader, out int bottomBorderTwips))
+                    else if (localName == "bottom" && TryReadBorderWidthTwips(xmlReader, out int bottomBorderTwips, out var bottomStyle))
                     {
                         if (insideCellBorders && currentCell != null)
                         {
                             currentCell.HasBottomBorderOverride = true;
                             currentCell.BorderBottomTwips = bottomBorderTwips;
+                            currentCell.BorderBottomStyle = bottomStyle;
                         }
                         else if (insideTableBorders && currentTable != null)
                         {
                             currentTable.DefaultBorderBottomTwips = bottomBorderTwips;
+                            currentTable.DefaultBorderBottomStyle = bottomStyle;
                         }
                     }
                     else if ((localName == "left" || localName == "start") && TryReadDxaWidth(xmlReader, out int leftPaddingTwips))
@@ -757,11 +767,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return int.TryParse(xmlReader.GetAttribute("w:w"), out width);
         }
 
-        private static bool TryReadBorderWidthTwips(XmlReader xmlReader, out int width)
+        private static bool TryReadBorderWidthTwips(XmlReader xmlReader, out int width, out Nedev.FileConverters.DocxToDoc.Model.BorderStyle style)
         {
             string? borderValue = xmlReader.GetAttribute("w:val");
-            if (string.Equals(borderValue, "nil", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(borderValue, "none", StringComparison.OrdinalIgnoreCase))
+            style = ParseBorderStyle(borderValue);
+
+            if (style == Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Nil || style == Nedev.FileConverters.DocxToDoc.Model.BorderStyle.None)
             {
                 width = 0;
                 return true;
@@ -775,6 +786,21 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             width = (int)Math.Round(Math.Max(0, eighthPointWidth) * 2.5d, MidpointRounding.AwayFromZero);
             return true;
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.BorderStyle ParseBorderStyle(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return Nedev.FileConverters.DocxToDoc.Model.BorderStyle.None;
+            return value.ToLowerInvariant() switch
+            {
+                "nil" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Nil,
+                "none" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.None,
+                "single" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Single,
+                "dotted" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dotted,
+                "dashed" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dashed,
+                "double" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Double,
+                _ => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Other
+            };
         }
 
         private void ParseBookmarks(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)

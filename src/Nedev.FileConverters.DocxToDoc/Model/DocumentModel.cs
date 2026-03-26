@@ -131,11 +131,17 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public TableWidthUnit PreferredWidthUnit { get; set; } = TableWidthUnit.Auto;
         public int CellSpacingTwips { get; set; }
         public int DefaultInsideHorizontalBorderTwips { get; set; }
+        public BorderStyle DefaultInsideHorizontalBorderStyle { get; set; } = BorderStyle.None;
         public int DefaultInsideVerticalBorderTwips { get; set; }
+        public BorderStyle DefaultInsideVerticalBorderStyle { get; set; } = BorderStyle.None;
         public int DefaultBorderLeftTwips { get; set; }
+        public BorderStyle DefaultBorderLeftStyle { get; set; } = BorderStyle.None;
         public int DefaultBorderRightTwips { get; set; }
+        public BorderStyle DefaultBorderRightStyle { get; set; } = BorderStyle.None;
         public int DefaultBorderTopTwips { get; set; }
+        public BorderStyle DefaultBorderTopStyle { get; set; } = BorderStyle.None;
         public int DefaultBorderBottomTwips { get; set; }
+        public BorderStyle DefaultBorderBottomStyle { get; set; } = BorderStyle.None;
         public int DefaultCellPaddingLeftTwips { get; set; }
         public int DefaultCellPaddingRightTwips { get; set; }
         public int DefaultCellPaddingTopTwips { get; set; }
@@ -147,6 +153,17 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         Auto = 0,
         Dxa = 1,
         Pct = 2
+    }
+
+    public enum BorderStyle : byte
+    {
+        None = 0,
+        Nil = 1,
+        Single = 2,
+        Dotted = 3,
+        Dashed = 4,
+        Double = 5,
+        Other = 6
     }
 
     public class TableRowModel
@@ -179,9 +196,13 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public bool HasTopBorderOverride { get; set; }
         public bool HasBottomBorderOverride { get; set; }
         public int BorderLeftTwips { get; set; }
+        public BorderStyle BorderLeftStyle { get; set; } = BorderStyle.None;
         public int BorderRightTwips { get; set; }
+        public BorderStyle BorderRightStyle { get; set; } = BorderStyle.None;
         public int BorderTopTwips { get; set; }
+        public BorderStyle BorderTopStyle { get; set; } = BorderStyle.None;
         public int BorderBottomTwips { get; set; }
+        public BorderStyle BorderBottomStyle { get; set; } = BorderStyle.None;
         public int PaddingLeftTwips { get; set; }
         public int PaddingRightTwips { get; set; }
         public int PaddingTopTwips { get; set; }

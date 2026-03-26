@@ -1625,26 +1625,36 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
-            if (dxaExplicitWidthTwips <= 0)
-            {
-                return false;
-            }
-
             int targetDxaExplicitWidthTwips = targetResolvedWidthTwips - fixedResolvedWidthTwips - pctExplicitWidthTwips;
-            if (targetDxaExplicitWidthTwips <= 0 || targetDxaExplicitWidthTwips >= dxaExplicitWidthTwips)
+            if (targetDxaExplicitWidthTwips > 0 && targetDxaExplicitWidthTwips < dxaExplicitWidthTwips)
             {
-                return false;
+                // Enough room for fixed and PCT, just scale down DXA
+                var shouldScale = new List<bool>(widthsTwips.Count);
+                for (int index = 0; index < widthsTwips.Count; index++)
+                {
+                    shouldScale.Add(isExplicitResolvedWidth[index] && explicitWidthUnits[index] != TableWidthUnit.Pct);
+                }
+                ScaleSelectedWidthsToTarget(widthsTwips, shouldScale, Math.Max(dxaExplicitCount, targetDxaExplicitWidthTwips));
+                return true;
+            }
+            else if (targetDxaExplicitWidthTwips <= 0)
+            {
+                // PCT alone overflows target (or leaves no room for DXA). Scale both PCT and DXA, protecting auto/fixed widths.
+                var shouldScale = new List<bool>(widthsTwips.Count);
+                for (int index = 0; index < widthsTwips.Count; index++)
+                {
+                    shouldScale.Add(isExplicitResolvedWidth[index]);
+                }
+                
+                int targetExplicitWidth = Math.Max(1, targetResolvedWidthTwips - fixedResolvedWidthTwips);
+                if (targetExplicitWidth < (dxaExplicitWidthTwips + pctExplicitWidthTwips))
+                {
+                    ScaleSelectedWidthsToTarget(widthsTwips, shouldScale, targetExplicitWidth);
+                    return true;
+                }
             }
 
-            targetDxaExplicitWidthTwips = Math.Max(dxaExplicitCount, targetDxaExplicitWidthTwips);
-            var shouldScale = new List<bool>(widthsTwips.Count);
-            for (int index = 0; index < widthsTwips.Count; index++)
-            {
-                shouldScale.Add(isExplicitResolvedWidth[index] && explicitWidthUnits[index] != TableWidthUnit.Pct);
-            }
-
-            ScaleSelectedWidthsToTarget(widthsTwips, shouldScale, targetDxaExplicitWidthTwips);
-            return true;
+            return false;
         }
 
         private static void ScaleResolvedWidthsToTarget(List<int> widthsTwips, int targetResolvedWidthTwips)
@@ -1823,19 +1833,25 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static int ResolveTableCellLeftBorderTwips(TableModel table, TableCellModel cell, TableCellModel? previousCell, bool isFirstColumn)
         {
-            if (HasExplicitLeftBorder(cell))
+            int currentLeft = HasExplicitLeftBorder(cell) ? Math.Max(0, cell.BorderLeftTwips) : -1;
+            int prevRight = (previousCell != null && HasExplicitRightBorder(previousCell)) ? Math.Max(0, previousCell.BorderRightTwips) : -1;
+
+            if (currentLeft >= 0 && prevRight >= 0)
             {
-                return Math.Max(0, cell.BorderLeftTwips);
+                return Math.Max(currentLeft, prevRight);
+            }
+            else if (currentLeft >= 0)
+            {
+                return currentLeft;
+            }
+            else if (prevRight >= 0)
+            {
+                return prevRight;
             }
 
             if (isFirstColumn)
             {
                 return Math.Max(0, table.DefaultBorderLeftTwips);
-            }
-
-            if (previousCell != null && HasExplicitRightBorder(previousCell))
-            {
-                return Math.Max(0, previousCell.BorderRightTwips);
             }
 
             return Math.Max(0, table.DefaultInsideVerticalBorderTwips);
@@ -1889,20 +1905,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static int ResolveTableCellTopBorderTwips(TableModel table, TableCellModel cell, TableRowModel? previousRow, int currentStartColumnIndex, int currentSpan, bool isFirstRow)
         {
-            if (HasExplicitTopBorder(cell))
+            int currentTop = HasExplicitTopBorder(cell) ? Math.Max(0, cell.BorderTopTwips) : -1;
+            var previousBottom = ResolvePreviousRowBottomBorder(previousRow, currentStartColumnIndex, currentSpan);
+            int prevBottomVal = previousBottom.hasExplicitOverride ? previousBottom.widthTwips : -1;
+
+            if (currentTop >= 0 && prevBottomVal >= 0)
             {
-                return Math.Max(0, cell.BorderTopTwips);
+                return Math.Max(currentTop, prevBottomVal);
+            }
+            else if (currentTop >= 0)
+            {
+                return currentTop;
+            }
+            else if (prevBottomVal >= 0)
+            {
+                return prevBottomVal;
             }
 
             if (isFirstRow)
             {
                 return Math.Max(0, table.DefaultBorderTopTwips);
-            }
-
-            var previousBottomBorder = ResolvePreviousRowBottomBorder(previousRow, currentStartColumnIndex, currentSpan);
-            if (previousBottomBorder.hasExplicitOverride)
-            {
-                return previousBottomBorder.widthTwips;
             }
 
             return Math.Max(0, table.DefaultInsideHorizontalBorderTwips);
@@ -2044,39 +2066,57 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return 1;
             }
 
-            return Math.Max(1, (estimatedTextWidthTwips + availableWidthTwips - 1) / availableWidthTwips);
+            // Word wrapping inefficiency factor: paragraphs rarely fill 100% of line width due to ragged right margins.
+            int adjustedTextWidthTwips = (int)Math.Round(estimatedTextWidthTwips * 1.05d, MidpointRounding.AwayFromZero);
+
+            return Math.Max(1, (adjustedTextWidthTwips + availableWidthTwips - 1) / availableWidthTwips);
         }
 
         private static int EstimateRunTextWidthTwips(RunModel run, int fallbackFontSizeHalfPoints)
         {
             int fontSizeHalfPoints = run.Properties.FontSize.GetValueOrDefault(fallbackFontSizeHalfPoints);
             int fontSizeTwips = Math.Max(120, fontSizeHalfPoints * 10);
-            int widthTwips = 0;
+            
+            double runStyleMultiplier = 1.0;
+            if (run.Properties.IsBold) runStyleMultiplier *= 1.1;
+            if (run.Properties.IsItalic) runStyleMultiplier *= 1.02;
 
+            bool isMonospace = string.Equals(run.Properties.FontName, "Courier New", StringComparison.OrdinalIgnoreCase) || 
+                               string.Equals(run.Properties.FontName, "Consolas", StringComparison.OrdinalIgnoreCase);
+
+            int widthTwips = 0;
             foreach (char character in run.Text)
             {
-                widthTwips += EstimateCharacterWidthTwips(character, fontSizeTwips);
+                double baseWidth = EstimateCharacterWidthTwips(character, fontSizeTwips, isMonospace);
+                widthTwips += (int)Math.Round(baseWidth * runStyleMultiplier, MidpointRounding.AwayFromZero);
             }
 
             return widthTwips;
         }
 
-        private static int EstimateCharacterWidthTwips(char character, int fontSizeTwips)
+        private static double EstimateCharacterWidthTwips(char character, int fontSizeTwips, bool isMonospace)
         {
+            if (isMonospace)
+            {
+                return fontSizeTwips * 0.60d;
+            }
+
             double widthFactor = character switch
             {
-                ' ' or '\t' => 0.35d,
+                ' ' or '\t' => 0.28d,
                 '.' or ',' or ';' or ':' or '!' or '|' or '\'' or '"' => 0.28d,
-                'i' or 'l' or 'I' or 'j' => 0.30d,
+                'i' or 'l' or 'j' => 0.28d,
+                'I' or '[' or ']' or '(' or ')' => 0.33d,
                 'f' or 't' or 'r' => 0.38d,
-                'm' or 'w' or 'M' or 'W' => 0.82d,
-                _ when char.IsUpper(character) => 0.68d,
-                _ when char.IsDigit(character) => 0.56d,
+                'm' or 'w' or 'M' or 'W' or 'O' or 'Q' => 0.82d,
+                _ when char.IsUpper(character) => 0.65d,
+                _ when char.IsDigit(character) => 0.55d,
+                _ when character >= 0x4E00 && character <= 0x9FFF => 1.0d,
                 _ when character >= 0x2E80 => 1.0d,
-                _ => 0.56d
+                _ => 0.52d
             };
 
-            return Math.Max(40, (int)Math.Round(fontSizeTwips * widthFactor, MidpointRounding.AwayFromZero));
+            return Math.Max(40d, fontSizeTwips * widthFactor);
         }
 
         private static int EstimateParagraphAdvanceTwips(ParagraphModel paragraph, int paragraphContentHeightTwips)
