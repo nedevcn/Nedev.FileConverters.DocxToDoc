@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.IO.Compression;
-using System.Text;
 using Xunit;
 
 namespace Nedev.FileConverters.DocxToDoc.Tests.Format
@@ -13,9 +12,8 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             using var ms = new MemoryStream();
             using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
             {
-                // Create docProps/core.xml
-                var propsEntry = archive.CreateEntry("docProps/core.xml");
-                using (var stream = propsEntry.Open())
+                var corePropsEntry = archive.CreateEntry("docProps/core.xml");
+                using (var stream = corePropsEntry.Open())
                 using (var writer = new StreamWriter(stream))
                 {
                     writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
@@ -28,16 +26,31 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                         "<dc:creator>John Doe</dc:creator>" +
                         "<cp:keywords>test, document, keywords</cp:keywords>" +
                         "<dc:description>This is a test document</dc:description>" +
-                        "<cp:category>Test Category</cp:category>" +
-                        "<cp:manager>Jane Smith</cp:manager>" +
-                        "<cp:company>Test Company</cp:company>" +
+                        "<cp:lastPrinted>2024-01-17T08:00:00Z</cp:lastPrinted>" +
                         "<cp:revision>5</cp:revision>" +
                         "<dcterms:created xsi:type=\"dcterms:W3CDTF\">2024-01-15T10:30:00Z</dcterms:created>" +
                         "<dcterms:modified xsi:type=\"dcterms:W3CDTF\">2024-01-16T14:20:00Z</dcterms:modified>" +
                         "</cp:coreProperties>");
                 }
 
-                // Create word/document.xml
+                var extendedPropsEntry = archive.CreateEntry("docProps/app.xml");
+                using (var stream = extendedPropsEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" " +
+                        "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">" +
+                        "<Application>Microsoft Word</Application>" +
+                        "<Pages>7</Pages>" +
+                        "<Words>123</Words>" +
+                        "<Characters>456</Characters>" +
+                        "<TotalTime>42</TotalTime>" +
+                        "<Company>Test Company</Company>" +
+                        "<Manager>Jane Smith</Manager>" +
+                        "<Category>Test Category</Category>" +
+                        "</Properties>");
+                }
+
                 var docEntry = archive.CreateEntry("word/document.xml");
                 using (var stream = docEntry.Open())
                 using (var writer = new StreamWriter(stream))
@@ -50,131 +63,116 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                         "</w:document>");
                 }
             }
+
             return ms.ToArray();
         }
 
         [Fact]
-        public void ReadDocument_WithProperties_ParsesTitle()
+        public void ReadDocument_WithProperties_ParsesCoreTextFields()
         {
-            // Arrange
             byte[] docxData = CreateDocxWithProperties();
             using var ms = new MemoryStream(docxData);
             using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
 
-            // Act
             var model = reader.ReadDocument();
 
-            // Assert
             Assert.Equal("Test Document Title", model.Properties.Title);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesSubject()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert - Subject may not be parsed correctly due to namespace issues
-            // Just verify it doesn't throw
-            Assert.NotNull(model.Properties);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesAuthor()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert
+            Assert.Equal("Test Subject", model.Properties.Subject);
             Assert.Equal("John Doe", model.Properties.Author);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesKeywords()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert - Keywords may not be parsed correctly due to namespace issues
-            // Just verify properties object exists
-            Assert.NotNull(model.Properties);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesDescription()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert
+            Assert.Equal("test, document, keywords", model.Properties.Keywords);
             Assert.Equal("This is a test document", model.Properties.Comments);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesDates()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert - Dates may not be parsed correctly due to namespace issues
-            // Just verify properties object exists
-            Assert.NotNull(model.Properties);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesCompany()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert - Company may not be parsed correctly due to namespace issues
-            // Just verify properties object exists
-            Assert.NotNull(model.Properties);
-        }
-
-        [Fact]
-        public void ReadDocument_WithProperties_ParsesRevision()
-        {
-            // Arrange
-            byte[] docxData = CreateDocxWithProperties();
-            using var ms = new MemoryStream(docxData);
-            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
-
-            // Act
-            var model = reader.ReadDocument();
-
-            // Assert
             Assert.Equal(5, model.Properties.Revision);
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesSubjectFromCoreProperties()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal("Test Subject", model.Properties.Subject);
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesCoreDateFields()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(new DateTime(2024, 1, 15, 10, 30, 0, DateTimeKind.Utc), model.Properties.Created!.Value.ToUniversalTime());
+            Assert.Equal(new DateTime(2024, 1, 16, 14, 20, 0, DateTimeKind.Utc), model.Properties.Modified!.Value.ToUniversalTime());
+            Assert.Equal(new DateTime(2024, 1, 17, 8, 0, 0, DateTimeKind.Utc), model.Properties.LastPrinted!.Value.ToUniversalTime());
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesLastPrintedFromCoreProperties()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(new DateTime(2024, 1, 17, 8, 0, 0, DateTimeKind.Utc), model.Properties.LastPrinted!.Value.ToUniversalTime());
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesExtendedIdentityFields()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal("Test Company", model.Properties.Company);
+            Assert.Equal("Jane Smith", model.Properties.Manager);
+            Assert.Equal("Test Category", model.Properties.Category);
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesManagerFromExtendedProperties()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal("Jane Smith", model.Properties.Manager);
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesExtendedStatisticFields()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(42, model.Properties.TotalEditingTime);
+            Assert.Equal(7, model.Properties.Pages);
+            Assert.Equal(123, model.Properties.Words);
+            Assert.Equal(456, model.Properties.Characters);
+        }
+
+        [Fact]
+        public void ReadDocument_WithProperties_ParsesTotalTimeFromExtendedProperties()
+        {
+            byte[] docxData = CreateDocxWithProperties();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(42, model.Properties.TotalEditingTime);
         }
     }
 }

@@ -96,6 +96,255 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithTabbedAndBrokenRun_AppendsAllRunFragments()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:t>Hello</w:t><w:tab/><w:t>World</w:t><w:br/><w:t>Next</w:t><w:cr/><w:t>Line</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Equal("Hello\tWorld\vNext\vLine", run.Text);
+            Assert.Equal("Hello\tWorld\vNext\vLine\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithHyperlinkTabbedAndBrokenRun_AppendsDisplayText()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body><w:p>" +
+                                 "<w:hyperlink r:id=\"rId1\"><w:r><w:t>Click</w:t><w:tab/><w:t>Here</w:t><w:br/><w:t>Now</w:t></w:r></w:hyperlink>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using var relsStream = relsEntry.Open();
+                using var relsWriter = new StreamWriter(relsStream);
+                relsWriter.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://example.com\" TargetMode=\"External\"/>" +
+                                 "</Relationships>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.NotNull(run.Hyperlink);
+            Assert.Equal("Click\tHere\vNow", run.Text);
+            Assert.Equal("Click\tHere\vNow", run.Hyperlink!.DisplayText);
+            Assert.Equal("https://example.com", run.Hyperlink.TargetUrl);
+            Assert.Equal("Click\tHere\vNow\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithSpecialHyphenCharacters_PreservesRunAndHyperlinkText()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body><w:p>" +
+                                 "<w:r><w:t>co</w:t><w:noBreakHyphen/><w:t>op</w:t><w:softHyphen/><w:t>erate</w:t></w:r>" +
+                                 "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>" +
+                                 "<w:hyperlink r:id=\"rId1\"><w:r><w:t>re</w:t><w:noBreakHyphen/><w:t>enter</w:t><w:softHyphen/><w:t>ing</w:t></w:r></w:hyperlink>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using var relsStream = relsEntry.Open();
+                using var relsWriter = new StreamWriter(relsStream);
+                relsWriter.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://example.com/hyphen\" TargetMode=\"External\"/>" +
+                                 "</Relationships>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+            var paragraph = Assert.Single(model.Paragraphs);
+            var hyperlinkRun = Assert.Single(paragraph.Runs, r => r.Hyperlink != null);
+
+            Assert.Equal("co\u2011op\u00ADerate", paragraph.Runs[0].Text);
+            Assert.Equal("re\u2011enter\u00ADing", hyperlinkRun.Text);
+            Assert.Equal("re\u2011enter\u00ADing", hyperlinkRun.Hyperlink!.DisplayText);
+            Assert.Equal("https://example.com/hyphen", hyperlinkRun.Hyperlink.TargetUrl);
+            Assert.Equal("co\u2011op\u00ADerate re\u2011enter\u00ADing\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithSymbolRuns_PreservesSymbolCharactersAndFonts()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body><w:p>" +
+                                 "<w:r><w:sym w:font=\"Wingdings\" w:char=\"F0FC\"/></w:r>" +
+                                 "<w:hyperlink r:id=\"rId1\"><w:r><w:sym w:font=\"Wingdings\" w:char=\"F0FC\"/></w:r></w:hyperlink>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using var relsStream = relsEntry.Open();
+                using var relsWriter = new StreamWriter(relsStream);
+                relsWriter.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://example.com/symbol\" TargetMode=\"External\"/>" +
+                                 "</Relationships>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+            var paragraph = Assert.Single(model.Paragraphs);
+            var symbolRun = paragraph.Runs[0];
+            var hyperlinkRun = Assert.Single(paragraph.Runs, r => r.Hyperlink != null);
+
+            Assert.Equal("\uF0FC", symbolRun.Text);
+            Assert.Equal("Wingdings", symbolRun.Properties.FontName);
+            Assert.Equal("\uF0FC", hyperlinkRun.Text);
+            Assert.Equal("Wingdings", hyperlinkRun.Properties.FontName);
+            Assert.Equal("\uF0FC", hyperlinkRun.Hyperlink!.DisplayText);
+            Assert.Equal("https://example.com/symbol", hyperlinkRun.Hyperlink.TargetUrl);
+            Assert.Equal("\uF0FC\uF0FC\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithMixedTextAndSymbolInSingleRun_SplitsRunsByEffectiveFont()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body><w:p>" +
+                                 "<w:r><w:rPr><w:rFonts w:ascii=\"Calibri\"/></w:rPr><w:t>A</w:t><w:sym w:font=\"Wingdings\" w:char=\"F0FC\"/><w:t>B</w:t></w:r>" +
+                                 "<w:hyperlink r:id=\"rId1\"><w:r><w:rPr><w:rFonts w:ascii=\"Calibri\"/></w:rPr><w:t>C</w:t><w:sym w:font=\"Wingdings\" w:char=\"F0FC\"/><w:t>D</w:t></w:r></w:hyperlink>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using var relsStream = relsEntry.Open();
+                using var relsWriter = new StreamWriter(relsStream);
+                relsWriter.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://example.com/mixed-symbol\" TargetMode=\"External\"/>" +
+                                 "</Relationships>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+            var runs = Assert.Single(model.Paragraphs).Runs;
+
+            Assert.Equal(6, runs.Count);
+            Assert.Equal("A", runs[0].Text);
+            Assert.Equal("Calibri", runs[0].Properties.FontName);
+            Assert.Null(runs[0].Hyperlink);
+
+            Assert.Equal("\uF0FC", runs[1].Text);
+            Assert.Equal("Wingdings", runs[1].Properties.FontName);
+            Assert.Null(runs[1].Hyperlink);
+
+            Assert.Equal("B", runs[2].Text);
+            Assert.Equal("Calibri", runs[2].Properties.FontName);
+            Assert.Null(runs[2].Hyperlink);
+
+            Assert.Equal("C", runs[3].Text);
+            Assert.Equal("Calibri", runs[3].Properties.FontName);
+            Assert.NotNull(runs[3].Hyperlink);
+
+            Assert.Equal("\uF0FC", runs[4].Text);
+            Assert.Equal("Wingdings", runs[4].Properties.FontName);
+            Assert.NotNull(runs[4].Hyperlink);
+
+            Assert.Equal("D", runs[5].Text);
+            Assert.Equal("Calibri", runs[5].Properties.FontName);
+            Assert.NotNull(runs[5].Hyperlink);
+            Assert.Equal("C\uF0FCD", runs[5].Hyperlink!.DisplayText);
+            Assert.Equal("https://example.com/mixed-symbol", runs[5].Hyperlink!.TargetUrl);
+            Assert.Equal("A\uF0FCBC\uF0FCD\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithPositionedTabs_PreservesRunAndHyperlinkText()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body><w:p>" +
+                                 "<w:r><w:t>Left</w:t><w:ptab w:alignment=\"center\" w:relativeTo=\"margin\"/><w:t>Right</w:t></w:r>" +
+                                 "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>" +
+                                 "<w:hyperlink r:id=\"rId1\"><w:r><w:t>Top</w:t><w:ptab w:alignment=\"right\" w:relativeTo=\"margin\"/><w:t>Bottom</w:t></w:r></w:hyperlink>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using var relsStream = relsEntry.Open();
+                using var relsWriter = new StreamWriter(relsStream);
+                relsWriter.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://example.com/ptab\" TargetMode=\"External\"/>" +
+                                 "</Relationships>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+            var paragraph = Assert.Single(model.Paragraphs);
+            var hyperlinkRun = Assert.Single(paragraph.Runs, r => r.Hyperlink != null);
+
+            Assert.Equal("Left\tRight", paragraph.Runs[0].Text);
+            Assert.Equal("Top\tBottom", hyperlinkRun.Text);
+            Assert.Equal("Top\tBottom", hyperlinkRun.Hyperlink!.DisplayText);
+            Assert.Equal("https://example.com/ptab", hyperlinkRun.Hyperlink.TargetUrl);
+            Assert.Equal("Left\tRight Top\tBottom\r", model.TextBuffer);
+        }
+
+        [Fact]
         public void ReadDocument_WithParagraphSpacing_ParsesSpacingProperties()
         {
             using var ms = new MemoryStream();

@@ -48,15 +48,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             source.VisitEntries(item =>
             {
-                if (item.IsStream)
+                if (item is CFStream sourceStream)
                 {
-                    var sourceStream = item as CFStream;
                     var targetStream = target.AddStream(item.Name);
                     targetStream.SetData(sourceStream.GetData());
                 }
-                else if (item.IsStorage)
+                else if (item is CFStorage sourceSubStorage)
                 {
-                    var sourceSubStorage = item as CFStorage;
                     var targetSubStorage = target.AddStorage(item.Name);
                     CopyStorage(sourceSubStorage, targetSubStorage);
                 }

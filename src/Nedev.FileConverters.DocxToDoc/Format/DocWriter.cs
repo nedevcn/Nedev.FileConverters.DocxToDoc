@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using Nedev.FileConverters.DocxToDoc.Model;
 
@@ -79,7 +80,219 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int paragraphVerticalCursorTwips = layoutSection.MarginTop;
             
             int currentCp = 0;
+            int visibleCp = 0;
             var tableWriter = new BinaryWriter(tableStream);
+            var supportedFootnotes = new List<(FootnoteModel footnote, int index)>();
+            for (int footnoteIndex = 0; footnoteIndex < model.Footnotes.Count; footnoteIndex++)
+            {
+                var footnote = model.Footnotes[footnoteIndex];
+                if (!CanWriteFootnote(footnote))
+                {
+                    continue;
+                }
+
+                supportedFootnotes.Add((footnote, footnoteIndex));
+            }
+
+            supportedFootnotes.Sort(static (left, right) =>
+            {
+                int byReference = left.footnote.ReferenceCp.CompareTo(right.footnote.ReferenceCp);
+                if (byReference != 0)
+                {
+                    return byReference;
+                }
+
+                return left.index.CompareTo(right.index);
+            });
+
+            var supportedEndnotes = new List<(EndnoteModel endnote, int index)>();
+            for (int endnoteIndex = 0; endnoteIndex < model.Endnotes.Count; endnoteIndex++)
+            {
+                var endnote = model.Endnotes[endnoteIndex];
+                if (!CanWriteEndnote(endnote))
+                {
+                    continue;
+                }
+
+                supportedEndnotes.Add((endnote, endnoteIndex));
+            }
+
+            supportedEndnotes.Sort(static (left, right) =>
+            {
+                int byReference = left.endnote.ReferenceCp.CompareTo(right.endnote.ReferenceCp);
+                if (byReference != 0)
+                {
+                    return byReference;
+                }
+
+                return left.index.CompareTo(right.index);
+            });
+
+            var supportedComments = new List<(CommentModel comment, int index)>();
+            for (int commentIndex = 0; commentIndex < model.Comments.Count; commentIndex++)
+            {
+                var comment = model.Comments[commentIndex];
+                if (!CanWriteComment(comment))
+                {
+                    continue;
+                }
+
+                supportedComments.Add((comment, commentIndex));
+            }
+
+            supportedComments.Sort(static (left, right) =>
+            {
+                int byEnd = left.comment.EndCp.CompareTo(right.comment.EndCp);
+                if (byEnd != 0)
+                {
+                    return byEnd;
+                }
+
+                int byStart = left.comment.StartCp.CompareTo(right.comment.StartCp);
+                if (byStart != 0)
+                {
+                    return byStart;
+                }
+
+                return left.index.CompareTo(right.index);
+            });
+
+            int nextFootnoteIndex = 0;
+            var emittedFootnotes = new List<(FootnoteModel footnote, int referenceCp)>(supportedFootnotes.Count);
+            int nextEndnoteIndex = 0;
+            var emittedEndnotes = new List<(EndnoteModel endnote, int referenceCp)>(supportedEndnotes.Count);
+            int nextCommentIndex = 0;
+            var emittedComments = new List<(CommentModel comment, int referenceCp)>(supportedComments.Count);
+
+            void EmitFootnoteReference(FootnoteModel footnote)
+            {
+                emittedFootnotes.Add((footnote, currentCp));
+                AppendNoteReferenceMarker(textBuilder, chpxWriter, ref currentCp, footnote.CustomMarkText);
+            }
+
+            void EmitEndnoteReference(EndnoteModel endnote)
+            {
+                emittedEndnotes.Add((endnote, currentCp));
+                AppendNoteReferenceMarker(textBuilder, chpxWriter, ref currentCp, endnote.CustomMarkText);
+            }
+
+            void AppendPendingFootnoteReferencesAtVisibleCp()
+            {
+                while (nextFootnoteIndex < supportedFootnotes.Count &&
+                       supportedFootnotes[nextFootnoteIndex].footnote.ReferenceCp == visibleCp)
+                {
+                    EmitFootnoteReference(supportedFootnotes[nextFootnoteIndex].footnote);
+                    nextFootnoteIndex++;
+                }
+            }
+
+            void AppendPendingEndnoteReferencesAtVisibleCp()
+            {
+                while (nextEndnoteIndex < supportedEndnotes.Count &&
+                       supportedEndnotes[nextEndnoteIndex].endnote.ReferenceCp == visibleCp)
+                {
+                    EmitEndnoteReference(supportedEndnotes[nextEndnoteIndex].endnote);
+                    nextEndnoteIndex++;
+                }
+            }
+
+            void AppendRemainingFootnoteReferencesAtDocumentEnd()
+            {
+                while (nextFootnoteIndex < supportedFootnotes.Count)
+                {
+                    EmitFootnoteReference(supportedFootnotes[nextFootnoteIndex].footnote);
+                    nextFootnoteIndex++;
+                }
+            }
+
+            void AppendRemainingEndnoteReferencesAtDocumentEnd()
+            {
+                while (nextEndnoteIndex < supportedEndnotes.Count)
+                {
+                    EmitEndnoteReference(supportedEndnotes[nextEndnoteIndex].endnote);
+                    nextEndnoteIndex++;
+                }
+            }
+
+            void EmitCommentReference(CommentModel comment)
+            {
+                textBuilder.Append('\x0005');
+                chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
+                emittedComments.Add((comment, currentCp));
+                currentCp += 1;
+            }
+
+            void AppendPendingCommentReferencesAtVisibleCp()
+            {
+                while (nextCommentIndex < supportedComments.Count &&
+                       supportedComments[nextCommentIndex].comment.EndCp == visibleCp)
+                {
+                    EmitCommentReference(supportedComments[nextCommentIndex].comment);
+                    nextCommentIndex++;
+                }
+            }
+
+            void AppendRemainingCommentReferencesAtDocumentEnd()
+            {
+                while (nextCommentIndex < supportedComments.Count)
+                {
+                    EmitCommentReference(supportedComments[nextCommentIndex].comment);
+                    nextCommentIndex++;
+                }
+            }
+
+            void AppendNonVisibleText(string text)
+            {
+                if (string.IsNullOrEmpty(text))
+                {
+                    return;
+                }
+
+                textBuilder.Append(text);
+                currentCp += text.Length;
+            }
+
+            void AppendVisibleText(string text, byte[]? runSprms = null)
+            {
+                if (string.IsNullOrEmpty(text))
+                {
+                    return;
+                }
+
+                int offset = 0;
+                while (offset < text.Length)
+                {
+                    AppendPendingFootnoteReferencesAtVisibleCp();
+                    AppendPendingEndnoteReferencesAtVisibleCp();
+                    AppendPendingCommentReferencesAtVisibleCp();
+
+                    int nextFootnoteAnchorVisibleCp = nextFootnoteIndex < supportedFootnotes.Count
+                        ? supportedFootnotes[nextFootnoteIndex].footnote.ReferenceCp
+                        : int.MaxValue;
+                    int nextEndnoteAnchorVisibleCp = nextEndnoteIndex < supportedEndnotes.Count
+                        ? supportedEndnotes[nextEndnoteIndex].endnote.ReferenceCp
+                        : int.MaxValue;
+                    int nextCommentAnchorVisibleCp = nextCommentIndex < supportedComments.Count
+                        ? supportedComments[nextCommentIndex].comment.EndCp
+                        : int.MaxValue;
+                    int nextAnchorVisibleCp = Math.Min(Math.Min(nextFootnoteAnchorVisibleCp, nextEndnoteAnchorVisibleCp), nextCommentAnchorVisibleCp);
+                    int segmentLength = Math.Min(text.Length - offset, Math.Max(0, nextAnchorVisibleCp - visibleCp));
+                    if (segmentLength == 0)
+                    {
+                        segmentLength = text.Length - offset;
+                    }
+
+                    if (runSprms != null && runSprms.Length > 0)
+                    {
+                        chpxWriter.AddRun(currentCp, currentCp + segmentLength, runSprms);
+                    }
+
+                    textBuilder.Append(text, offset, segmentLength);
+                    offset += segmentLength;
+                    currentCp += segmentLength;
+                    visibleCp += segmentLength;
+                }
+            }
 
             void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips, int? maxVisibleCursorTwips = null)
             {
@@ -107,35 +320,6 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         continue;
                     }
 
-                    // Handle images
-                    if (run.Image != null && run.Image.Data != null)
-                    {
-                        string imageContentType = ResolveImageContentType(run.Image.ContentType, run.Image.Data);
-                        (int imageWidthTwips, int imageHeightTwips) = ResolveImageDimensionsTwips(run.Image, imageContentType);
-
-                        // Add a placeholder character for the image
-                        // In MS-DOC, embedded objects use special characters
-                        textBuilder.Append('\x0001'); // Object placeholder
-                        
-                        // Emit a DOC-style picture block into the Data stream and point CHPX to it.
-                        byte[] pictureBlock = BuildPictureBlock(run.Image, imageContentType);
-                        int pictureOffset = nextPictureOffset;
-                        nextPictureOffset += pictureBlock.Length;
-                        embeddedObjects.Add(pictureBlock);
-
-                        if (SupportsOfficeArtBlip(imageContentType))
-                        {
-                            (int leftTwips, int topTwips, _, _) = ResolveImageBoundsTwips(run.Image, imageContentType, layoutSection, paragraphTopTwips, paragraphContentHeightTwips);
-                            officeArtBlips.Add((currentCp, run.Image.Data, imageContentType, imageWidthTwips, imageHeightTwips, leftTwips, topTwips, run.Image.WrapType, run.Image.BehindText, run.Image.AllowOverlap, run.Image.HorizontalRelativeTo, run.Image.VerticalRelativeTo));
-                        }
-                        
-                        // Add CHPX with fSpec plus a Data-stream picture location.
-                        chpxWriter.AddRun(currentCp, currentCp + 1, BuildImageSprms(pictureOffset));
-                        
-                        currentCp += 1;
-                        continue;
-                    }
-
                     if (run.Hyperlink != null)
                     {
                         int hyperlinkStart = runIndex;
@@ -146,15 +330,21 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         }
 
                         AppendFieldCharacter('\x0013');
-                        AppendPlainText(BuildHyperlinkInstruction(hyperlink));
+                        AppendNonVisibleText(BuildHyperlinkInstruction(hyperlink));
                         AppendFieldCharacter('\x0014');
 
                         for (int hyperlinkRunIndex = hyperlinkStart; hyperlinkRunIndex <= runIndex; hyperlinkRunIndex++)
                         {
-                            AppendFormattedRunText(para.Runs[hyperlinkRunIndex]);
+                            AppendVisibleRunContent(para.Runs[hyperlinkRunIndex]);
                         }
 
                         AppendFieldCharacter('\x0015');
+                        continue;
+                    }
+
+                    if (run.Image != null && run.Image.Data != null)
+                    {
+                        AppendImageRunContent(run);
                         continue;
                     }
 
@@ -166,12 +356,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             AppendFieldCharacter('\x0013', run.Field, fieldDepth);
 
                             string instruction = ResolveFieldInstruction(run.Field);
-                            AppendPlainText(instruction);
+                            AppendNonVisibleText(instruction);
 
                             if (!string.IsNullOrEmpty(run.Field.Result))
                             {
                                 AppendFieldCharacter('\x0014', run.Field, fieldDepth);
-                                AppendPlainText(run.Field.Result);
+                                AppendVisibleText(run.Field.Result);
                             }
 
                             AppendFieldCharacter('\x0015', run.Field, fieldDepth);
@@ -189,7 +379,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                     if (run.Field != null && !run.IsFieldSeparate && !run.IsFieldEnd && run.Text.Length == 0 && !string.IsNullOrEmpty(run.Field.Instruction))
                     {
-                        AppendPlainText(run.Field.Instruction);
+                        AppendNonVisibleText(run.Field.Instruction);
                         continue;
                     }
 
@@ -207,7 +397,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             !string.IsNullOrEmpty(run.Field.Result))
                         {
                             AppendFieldCharacter('\x0014', run.Field, fieldDepth);
-                            AppendPlainText(run.Field.Result);
+                            AppendVisibleText(run.Field.Result);
                         }
 
                         AppendFieldCharacter('\x0015', run.Field, fieldDepth);
@@ -228,7 +418,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     if (!separatedFields.Contains(openField) && !string.IsNullOrEmpty(openField.Result))
                     {
                         AppendFieldCharacter('\x0014', openField, fieldDepth);
-                        AppendPlainText(openField.Result);
+                        AppendVisibleText(openField.Result);
                     }
 
                     AppendFieldCharacter('\x0015', openField, fieldDepth);
@@ -252,9 +442,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
                 AppendParagraphFormattingSprms(paraSprms, para.Properties);
 
+                AppendPendingFootnoteReferencesAtVisibleCp();
+                AppendPendingEndnoteReferencesAtVisibleCp();
+                AppendPendingCommentReferencesAtVisibleCp();
                 textBuilder.Append('\r');
                 papxWriter.AddParagraph(paraStart, currentCp + 1, paraSprms.ToArray());
                 currentCp += 1;
+                visibleCp += 1;
                 verticalCursorTwips += paragraphAdvanceTwips;
 
                 void AppendFieldCharacter(char marker, FieldModel? fieldModel = null, int nestingDepth = 0)
@@ -273,17 +467,6 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     currentCp += 1;
                 }
 
-                void AppendPlainText(string text)
-                {
-                    if (string.IsNullOrEmpty(text))
-                    {
-                        return;
-                    }
-
-                    textBuilder.Append(text);
-                    currentCp += text.Length;
-                }
-
                 void AppendFormattedRunText(RunModel runModel)
                 {
                     if (runModel.Text.Length == 0)
@@ -294,11 +477,46 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     byte[] runSprms = BuildRunSprms(runModel.Properties, model.Fonts);
                     if (runSprms.Length > 0)
                     {
-                        chpxWriter.AddRun(currentCp, currentCp + runModel.Text.Length, runSprms);
+                        AppendVisibleText(runModel.Text, runSprms);
+                    }
+                    else
+                    {
+                        AppendVisibleText(runModel.Text);
+                    }
+                }
+
+                void AppendImageRunContent(RunModel runModel)
+                {
+                    if (runModel.Image == null || runModel.Image.Data == null)
+                    {
+                        return;
                     }
 
-                    textBuilder.Append(runModel.Text);
-                    currentCp += runModel.Text.Length;
+                    string imageContentType = ResolveImageContentType(runModel.Image.ContentType, runModel.Image.Data);
+                    (int imageWidthTwips, int imageHeightTwips) = ResolveImageDimensionsTwips(runModel.Image, imageContentType);
+
+                    // In MS-DOC, embedded objects use a single placeholder character in the text stream.
+                    textBuilder.Append('\x0001');
+
+                    byte[] pictureBlock = BuildPictureBlock(runModel.Image, imageContentType);
+                    int pictureOffset = nextPictureOffset;
+                    nextPictureOffset += pictureBlock.Length;
+                    embeddedObjects.Add(pictureBlock);
+
+                    if (SupportsOfficeArtBlip(imageContentType))
+                    {
+                        (int leftTwips, int topTwips, _, _) = ResolveImageBoundsTwips(runModel.Image, imageContentType, layoutSection, paragraphTopTwips, paragraphContentHeightTwips);
+                        officeArtBlips.Add((currentCp, runModel.Image.Data, imageContentType, imageWidthTwips, imageHeightTwips, leftTwips, topTwips, runModel.Image.WrapType, runModel.Image.BehindText, runModel.Image.AllowOverlap, runModel.Image.HorizontalRelativeTo, runModel.Image.VerticalRelativeTo));
+                    }
+
+                    chpxWriter.AddRun(currentCp, currentCp + 1, BuildImageSprms(pictureOffset));
+                    currentCp += 1;
+                }
+
+                void AppendVisibleRunContent(RunModel runModel)
+                {
+                    AppendImageRunContent(runModel);
+                    AppendFormattedRunText(runModel);
                 }
 
                 static string BuildHyperlinkInstruction(HyperlinkModel hyperlinkModel)
@@ -531,6 +749,65 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
+            AppendPendingFootnoteReferencesAtVisibleCp();
+            AppendPendingEndnoteReferencesAtVisibleCp();
+            AppendPendingCommentReferencesAtVisibleCp();
+            AppendRemainingFootnoteReferencesAtDocumentEnd();
+            AppendRemainingEndnoteReferencesAtDocumentEnd();
+            AppendRemainingCommentReferencesAtDocumentEnd();
+
+            int mainDocumentCp = currentCp;
+            int footnoteStoryLength = 0;
+            var footnoteTextStoryStarts = new List<int>(emittedFootnotes.Count + 2);
+            for (int footnoteIndex = 0; footnoteIndex < emittedFootnotes.Count; footnoteIndex++)
+            {
+                var (footnote, _) = emittedFootnotes[footnoteIndex];
+                footnoteTextStoryStarts.Add(footnoteStoryLength);
+
+                AppendNoteReferenceMarker(textBuilder, chpxWriter, ref currentCp, ref footnoteStoryLength, footnote.CustomMarkText);
+
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref footnoteStoryLength, footnote.Text);
+            }
+
+            int headerStoryLength = 0;
+            var headerStoryStarts = new List<int>(8);
+            if (HasExplicitHeaderStories(model))
+            {
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteSeparatorText);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteContinuationSeparatorText);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteContinuationNoticeText);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteSeparatorText);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteContinuationSeparatorText);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteContinuationNoticeText);
+            }
+
+            int commentStoryLength = 0;
+            var commentTextStoryStarts = new List<int>(emittedComments.Count + 2);
+            for (int commentIndex = 0; commentIndex < emittedComments.Count; commentIndex++)
+            {
+                var (comment, _) = emittedComments[commentIndex];
+                commentTextStoryStarts.Add(commentStoryLength);
+
+                textBuilder.Append('\x0005');
+                chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
+                currentCp += 1;
+                commentStoryLength += 1;
+
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref commentStoryLength, comment.Text);
+            }
+
+            int endnoteStoryLength = 0;
+            var endnoteTextStoryStarts = new List<int>(emittedEndnotes.Count + 2);
+            for (int endnoteIndex = 0; endnoteIndex < emittedEndnotes.Count; endnoteIndex++)
+            {
+                var (endnote, _) = emittedEndnotes[endnoteIndex];
+                endnoteTextStoryStarts.Add(endnoteStoryLength);
+
+                AppendNoteReferenceMarker(textBuilder, chpxWriter, ref currentCp, ref endnoteStoryLength, endnote.CustomMarkText);
+
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref endnoteStoryLength, endnote.Text);
+            }
+
             string finalBaseText = textBuilder.ToString();
             byte[] textBytes = System.Text.Encoding.GetEncoding(1252).GetBytes(finalBaseText);
             wordDocumentStream.Seek(1536, SeekOrigin.Begin);
@@ -572,7 +849,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 int pnPapx = (int)(wordDocumentStream.Position / 512);
                 wordDocumentStream.Write(papxPage);
                 fcPlcfbtePapx = (int)tableStream.Position;
-                tableWriter.Write((int)0); tableWriter.Write((int)currentCp); tableWriter.Write((int)pnPapx);
+                tableWriter.Write((int)0); tableWriter.Write((int)mainDocumentCp); tableWriter.Write((int)pnPapx);
                 lcbPlcfbtePapx = (int)tableStream.Position - fcPlcfbtePapx;
             }
 
@@ -586,7 +863,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 int pnTapx = (int)(wordDocumentStream.Position / 512);
                 wordDocumentStream.Write(tapxPage);
                 fcPlcfbteTapx = (int)tableStream.Position;
-                tableWriter.Write((int)0); tableWriter.Write((int)currentCp); tableWriter.Write((int)pnTapx);
+                tableWriter.Write((int)0); tableWriter.Write((int)mainDocumentCp); tableWriter.Write((int)pnTapx);
                 lcbPlcfbteTapx = (int)tableStream.Position - fcPlcfbteTapx;
             }
 
@@ -618,7 +895,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 {
                     tableWriter.Write(cp);
                 }
-                tableWriter.Write(currentCp);
+                tableWriter.Write(mainDocumentCp);
 
                 foreach (var (_, descriptor) in fieldEntries)
                 {
@@ -635,7 +912,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             if (officeArtPictures.Count > 0)
             {
                 fcPlcfspaMom = (int)tableStream.Position;
-                WritePlcfspaMom(tableWriter, officeArtPictures, currentCp);
+                WritePlcfspaMom(tableWriter, officeArtPictures, mainDocumentCp);
                 lcbPlcfspaMom = (int)tableStream.Position - fcPlcfspaMom;
             }
 
@@ -666,6 +943,20 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int lcbPlcfBkmkl = 0;
             int fcSttbfbkmk = 0;
             int lcbSttbfbkmk = 0;
+            int fcPlcffndRef = 0;
+            int lcbPlcffndRef = 0;
+            int fcPlcffndTxt = 0;
+            int lcbPlcffndTxt = 0;
+            int fcPlcfHdd = 0;
+            int lcbPlcfHdd = 0;
+            int fcPlcfandRef = 0;
+            int lcbPlcfandRef = 0;
+            int fcPlcfandTxt = 0;
+            int lcbPlcfandTxt = 0;
+            int fcPlcfendRef = 0;
+            int lcbPlcfendRef = 0;
+            int fcPlcfendTxt = 0;
+            int lcbPlcfendTxt = 0;
 
             if (model.Bookmarks.Count > 0)
             {
@@ -691,7 +982,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     tableWriter.Write(bookmark.StartCp);
                 }
                 // Add terminator
-                tableWriter.Write(currentCp);
+                tableWriter.Write(mainDocumentCp);
                 lcbPlcfBkmkf = (int)tableStream.Position - fcPlcfBkmkf;
 
                 // Write PlcfBkmkl (bookmark last CPs)
@@ -701,8 +992,105 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     tableWriter.Write(bookmark.EndCp);
                 }
                 // Add terminator
-                tableWriter.Write(currentCp);
+                tableWriter.Write(mainDocumentCp);
                 lcbPlcfBkmkl = (int)tableStream.Position - fcPlcfBkmkl;
+            }
+
+            if (emittedFootnotes.Count > 0)
+            {
+                fcPlcffndRef = (int)tableStream.Position;
+                foreach (var (_, referenceCp) in emittedFootnotes)
+                {
+                    tableWriter.Write(referenceCp);
+                }
+                tableWriter.Write(mainDocumentCp);
+
+                foreach (var _ in emittedFootnotes)
+                {
+                    tableWriter.Write((ushort)1);
+                }
+
+                lcbPlcffndRef = (int)tableStream.Position - fcPlcffndRef;
+
+                fcPlcffndTxt = (int)tableStream.Position;
+                foreach (int startCp in footnoteTextStoryStarts)
+                {
+                    tableWriter.Write(startCp);
+                }
+
+                int closingParagraphCp = footnoteStoryLength > 0 ? footnoteStoryLength - 1 : 0;
+                tableWriter.Write(closingParagraphCp);
+                tableWriter.Write(footnoteStoryLength);
+                lcbPlcffndTxt = (int)tableStream.Position - fcPlcffndTxt;
+            }
+
+            if (headerStoryStarts.Count > 0)
+            {
+                fcPlcfHdd = (int)tableStream.Position;
+                foreach (int startCp in headerStoryStarts)
+                {
+                    tableWriter.Write(startCp);
+                }
+
+                tableWriter.Write(headerStoryLength - 1);
+                tableWriter.Write(headerStoryLength);
+                lcbPlcfHdd = (int)tableStream.Position - fcPlcfHdd;
+            }
+
+            if (emittedComments.Count > 0)
+            {
+                fcPlcfandRef = (int)tableStream.Position;
+                foreach (var (_, referenceCp) in emittedComments)
+                {
+                    tableWriter.Write(referenceCp);
+                }
+                tableWriter.Write(mainDocumentCp);
+
+                foreach (var (comment, _) in emittedComments)
+                {
+                    WriteAtrdPre10(tableWriter, comment);
+                }
+
+                lcbPlcfandRef = (int)tableStream.Position - fcPlcfandRef;
+
+                fcPlcfandTxt = (int)tableStream.Position;
+                foreach (int startCp in commentTextStoryStarts)
+                {
+                    tableWriter.Write(startCp);
+                }
+
+                int closingParagraphCp = commentStoryLength > 0 ? commentStoryLength - 1 : 0;
+                tableWriter.Write(closingParagraphCp);
+                tableWriter.Write(commentStoryLength);
+                lcbPlcfandTxt = (int)tableStream.Position - fcPlcfandTxt;
+            }
+
+            if (emittedEndnotes.Count > 0)
+            {
+                fcPlcfendRef = (int)tableStream.Position;
+                foreach (var (_, referenceCp) in emittedEndnotes)
+                {
+                    tableWriter.Write(referenceCp);
+                }
+                tableWriter.Write(mainDocumentCp);
+
+                foreach (var _ in emittedEndnotes)
+                {
+                    tableWriter.Write((ushort)1);
+                }
+
+                lcbPlcfendRef = (int)tableStream.Position - fcPlcfendRef;
+
+                fcPlcfendTxt = (int)tableStream.Position;
+                foreach (int startCp in endnoteTextStoryStarts)
+                {
+                    tableWriter.Write(startCp);
+                }
+
+                int closingParagraphCp = endnoteStoryLength > 0 ? endnoteStoryLength - 1 : 0;
+                tableWriter.Write(closingParagraphCp);
+                tableWriter.Write(endnoteStoryLength);
+                lcbPlcfendTxt = (int)tableStream.Position - fcPlcfendTxt;
             }
 
             // 9. Process section properties: Build Plcfsed and SED/SEP
@@ -739,7 +1127,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             // Build Plcfsed in 1Table
             int fcPlcfsed = (int)tableStream.Position;
             tableWriter.Write((int)0);
-            tableWriter.Write((int)currentCp);
+            tableWriter.Write((int)mainDocumentCp);
             foreach (var fcSep in fcSeps)
             {
                 tableWriter.Write((short)0); // fn = 0 (WordDocument)
@@ -755,6 +1143,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 fcClx = fcClx,
                 lcbClx = lcbClx,
+                fcPlcffndRef = fcPlcffndRef,
+                lcbPlcffndRef = lcbPlcffndRef,
+                fcPlcffndTxt = fcPlcffndTxt,
+                lcbPlcffndTxt = lcbPlcffndTxt,
+                fcPlcfHdd = fcPlcfHdd,
+                lcbPlcfHdd = lcbPlcfHdd,
                 fcPlcfbteChpx = fcPlcfbteChpx,
                 lcbPlcfbteChpx = lcbPlcfbteChpx,
                 fcPlcfbtePapx = fcPlcfbtePapx,
@@ -783,7 +1177,19 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbPlcfBkmkl = lcbPlcfBkmkl,
                 fcSttbfbkmk = fcSttbfbkmk,
                 lcbSttbfbkmk = lcbSttbfbkmk,
-                ccpText = currentCp,
+                fcPlcfandRef = fcPlcfandRef,
+                lcbPlcfandRef = lcbPlcfandRef,
+                fcPlcfandTxt = fcPlcfandTxt,
+                lcbPlcfandTxt = lcbPlcfandTxt,
+                fcPlcfendRef = fcPlcfendRef,
+                lcbPlcfendRef = lcbPlcfendRef,
+                fcPlcfendTxt = fcPlcfendTxt,
+                lcbPlcfendTxt = lcbPlcfendTxt,
+                ccpText = mainDocumentCp,
+                ccpFtn = footnoteStoryLength,
+                ccpHdd = headerStoryLength,
+                ccpAtn = commentStoryLength,
+                ccpEdn = endnoteStoryLength,
                 HasPictures = embeddedObjects.Count > 0
             };
             fib.WriteTo(new BinaryWriter(wordDocumentStream, System.Text.Encoding.GetEncoding(1252), leaveOpen: true));
@@ -811,17 +1217,199 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
         }
 
-        private static byte[] BuildImageSprms(int pictureOffset)
+        private static byte[] BuildSpecialCharacterSprms()
         {
             var sprms = new List<byte>
             {
-                0x55, 0x08, 0x01,
+                0x55, 0x08, 0x01
+            };
+
+            return sprms.ToArray();
+        }
+
+        private static void AppendSecondaryStoryText(StringBuilder textBuilder, ref int currentCp, ref int storyLength, string text)
+        {
+            if (!string.IsNullOrEmpty(text))
+            {
+                textBuilder.Append(text);
+                currentCp += text.Length;
+                storyLength += text.Length;
+            }
+
+            textBuilder.Append('\r');
+            currentCp += 1;
+            storyLength += 1;
+        }
+
+        private static void AppendNoteReferenceMarker(
+            StringBuilder textBuilder,
+            ChpxFkpWriter chpxWriter,
+            ref int currentCp,
+            string? customMarkText)
+        {
+            string? normalizedCustomMark = NormalizeCustomMarkText(customMarkText);
+            if (normalizedCustomMark != null)
+            {
+                textBuilder.Append(normalizedCustomMark);
+                currentCp += normalizedCustomMark.Length;
+                return;
+            }
+
+            textBuilder.Append('\x0002');
+            chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
+            currentCp += 1;
+        }
+
+        private static void AppendNoteReferenceMarker(
+            StringBuilder textBuilder,
+            ChpxFkpWriter chpxWriter,
+            ref int currentCp,
+            ref int storyLength,
+            string? customMarkText)
+        {
+            string? normalizedCustomMark = NormalizeCustomMarkText(customMarkText);
+            if (normalizedCustomMark != null)
+            {
+                textBuilder.Append(normalizedCustomMark);
+                currentCp += normalizedCustomMark.Length;
+                storyLength += normalizedCustomMark.Length;
+                return;
+            }
+
+            textBuilder.Append('\x0002');
+            chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
+            currentCp += 1;
+            storyLength += 1;
+        }
+
+        private static string? NormalizeCustomMarkText(string? customMarkText)
+        {
+            if (string.IsNullOrWhiteSpace(customMarkText))
+            {
+                return null;
+            }
+
+            return customMarkText;
+        }
+
+        private static void AppendHeaderStoryText(
+            StringBuilder textBuilder,
+            ref int currentCp,
+            ref int storyLength,
+            List<int> storyStarts,
+            string? text)
+        {
+            storyStarts.Add(storyLength);
+            if (text != null)
+            {
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref storyLength, text);
+            }
+        }
+
+        private static bool HasExplicitHeaderStories(DocumentModel model)
+        {
+            return model.FootnoteSeparatorText != null ||
+                   model.FootnoteContinuationSeparatorText != null ||
+                   model.FootnoteContinuationNoticeText != null ||
+                   model.EndnoteSeparatorText != null ||
+                   model.EndnoteContinuationSeparatorText != null ||
+                   model.EndnoteContinuationNoticeText != null;
+        }
+
+        private static byte[] BuildImageSprms(int pictureOffset)
+        {
+            var sprms = new List<byte>(BuildSpecialCharacterSprms())
+            {
                 0x03, 0x6A
             };
 
             sprms.AddRange(BitConverter.GetBytes(pictureOffset));
 
             return sprms.ToArray();
+        }
+
+        private static void WriteAtrdPre10(BinaryWriter writer, CommentModel comment)
+        {
+            string initials = ResolveCommentInitials(comment);
+            int length = Math.Min(initials.Length, 10);
+            for (int index = 0; index < 10; index++)
+            {
+                char value = index < length ? initials[index] : '\0';
+                writer.Write((ushort)value);
+            }
+
+            writer.Write(unchecked((short)-1));
+            writer.Write((short)0);
+            writer.Write((ushort)0);
+            writer.Write(-1);
+        }
+
+        private static bool CanWriteFootnote(FootnoteModel footnote)
+        {
+            return CanWriteNoteReference(footnote.ReferenceCp, footnote.Id);
+        }
+
+        private static bool CanWriteEndnote(EndnoteModel endnote)
+        {
+            return CanWriteNoteReference(endnote.ReferenceCp, endnote.Id);
+        }
+
+        private static bool CanWriteComment(CommentModel comment)
+        {
+            return !comment.IsReply &&
+                   comment.StartCp >= 0 &&
+                   comment.EndCp >= comment.StartCp;
+        }
+
+        private static string ResolveCommentInitials(CommentModel comment)
+        {
+            if (!string.IsNullOrWhiteSpace(comment.Initials))
+            {
+                return comment.Initials.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(comment.Author))
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(10);
+            string[] tokens = comment.Author.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string token in tokens)
+            {
+                if (builder.Length >= 10)
+                {
+                    break;
+                }
+
+                builder.Append(char.ToUpperInvariant(token[0]));
+            }
+
+            if (builder.Length == 0)
+            {
+                foreach (char value in comment.Author)
+                {
+                    if (!char.IsWhiteSpace(value))
+                    {
+                        builder.Append(char.ToUpperInvariant(value));
+                        break;
+                    }
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static bool IsSpecialNoteId(string? id)
+        {
+            return int.TryParse(id, out int parsedId) && parsedId <= 1;
+        }
+
+        private static bool CanWriteNoteReference(int referenceCp, string? id)
+        {
+            return referenceCp >= 0 &&
+                   !string.IsNullOrWhiteSpace(id) &&
+                   !IsSpecialNoteId(id);
         }
 
         private static byte[] BuildPictureBlock(ImageModel image, string? resolvedContentType = null)
@@ -1026,7 +1614,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         private static byte[] BuildSimpleProperty(short propertyNumber, bool isBlipId, int value)
         {
             byte[] property = new byte[6];
-            short propertyId = (short)(propertyNumber | (isBlipId ? 0x4000 : 0));
+            ushort propertyId = (ushort)(unchecked((ushort)propertyNumber) | (isBlipId ? (ushort)0x4000 : (ushort)0));
             BitConverter.GetBytes(propertyId).CopyTo(property, 0x00);
             BitConverter.GetBytes(value).CopyTo(property, 0x02);
 
@@ -1510,12 +2098,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int unresolvedSpanSum = 0;
             int unresolvedCellCount = 0;
 
-            foreach (var cell in row.Cells)
+            for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
             {
+                var cell = row.Cells[cellIndex];
                 int span = Math.Max(1, cell.GridSpan);
+                bool isFirstColumn = gridColumnIndex == 0;
+                bool isLastColumn = gridColumnIndex + span >= totalColumnCount;
+                var previousCell = cellIndex > 0 ? row.Cells[cellIndex - 1] : null;
                 int explicitWidthTwips = ResolveExplicitCellWidthTwips(cell, targetTableWidthTwips);
                 int widthTwips = explicitWidthTwips;
                 bool resolvedFromExplicitWidth = explicitWidthTwips > 0;
+                int horizontalOverheadTwips = ResolveAutoCellHorizontalOverheadTwips(table, cell, previousCell, isFirstColumn, isLastColumn);
                 if (widthTwips <= 0 && table.GridColumnWidths.Count > 0)
                 {
                     widthTwips = ResolveTableCellWidth(table, gridColumnIndex, span, 0);
@@ -1525,7 +2118,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 spans.Add(span);
                 isExplicitResolvedWidth.Add(resolvedFromExplicitWidth);
                 explicitWidthUnits.Add(resolvedFromExplicitWidth ? cell.WidthUnit : TableWidthUnit.Auto);
-                minimumAutoWidthsTwips.Add(Math.Max(720, 720 * span));
+                minimumAutoWidthsTwips.Add(Math.Max(720, 720 * span) + horizontalOverheadTwips);
 
                 if (widthTwips > 0)
                 {
@@ -1619,6 +2212,19 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             ScaleWidthsToTarget(widthsTwips, targetTableWidthTwips);
             return widthsTwips;
+        }
+
+        private static int ResolveAutoCellHorizontalOverheadTwips(TableModel table, TableCellModel cell, TableCellModel? previousCell, bool isFirstColumn, bool isLastColumn)
+        {
+            int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, previousCell, isFirstColumn);
+            int rightBorderTwips = ResolveTableCellRightBorderTwips(table, cell, isLastColumn);
+            int horizontalPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
+            int horizontalSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
+
+            return Math.Max(0, leftBorderTwips)
+                + Math.Max(0, rightBorderTwips)
+                + Math.Max(0, horizontalPaddingTwips)
+                + Math.Max(0, horizontalSpacingTwips);
         }
 
         private static bool ScaleExplicitWidthsToTarget(List<int> widthsTwips, List<bool> isExplicitResolvedWidth, List<TableWidthUnit> explicitWidthUnits, int targetResolvedWidthTwips)
@@ -2115,6 +2721,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int maxContentWidth = 0;
             foreach (var paragraph in cell.Paragraphs)
             {
+                int paragraphMaxLineWidth = 0;
                 int currentWidth = 0;
                 foreach (var run in paragraph.Runs)
                 {
@@ -2130,6 +2737,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     string text = run.Text ?? string.Empty;
                     foreach (char c in text)
                     {
+                        if (IsParagraphBreakCharacter(c))
+                        {
+                            paragraphMaxLineWidth = Math.Max(paragraphMaxLineWidth, currentWidth);
+                            currentWidth = 0;
+                            continue;
+                        }
+
                         double baseWidth = EstimateCharacterWidthTwips(c, runFontSizeTwips, isMonospace);
                         currentWidth += (int)Math.Round(baseWidth * runStyleMultiplier, MidpointRounding.AwayFromZero);
                     }
@@ -2140,8 +2754,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     }
                 }
 
-                currentWidth += Math.Max(0, paragraph.Properties.LeftIndentTwips) + Math.Max(0, paragraph.Properties.RightIndentTwips);
-                maxContentWidth = Math.Max(maxContentWidth, currentWidth);
+                paragraphMaxLineWidth = Math.Max(paragraphMaxLineWidth, currentWidth);
+                paragraphMaxLineWidth += Math.Max(0, paragraph.Properties.LeftIndentTwips) + Math.Max(0, paragraph.Properties.RightIndentTwips);
+                maxContentWidth = Math.Max(maxContentWidth, paragraphMaxLineWidth);
             }
 
             return maxContentWidth;
@@ -2170,7 +2785,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 while (i < text.Length)
                 {
                     char c = text[i];
-                    if (c == '\n' || c == '\r')
+                    if (IsParagraphBreakCharacter(c))
                     {
                         lineCount++;
                         currentLineWidthTwips = 0;
@@ -2185,7 +2800,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     while (i < text.Length)
                     {
                         char wc = text[i];
-                        if (wc == '\n' || wc == '\r') break;
+                        if (IsParagraphBreakCharacter(wc)) break;
 
                         bool currentIsWhitespace = char.IsWhiteSpace(wc);
                         if (currentIsWhitespace != isWhitespace && wordWidthTwips > 0) break;
@@ -2240,8 +2855,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return lineCount;
         }
 
+        private static bool IsParagraphBreakCharacter(char character)
+        {
+            return character == '\n' || character == '\r' || character == '\v' || character == '\f';
+        }
+
         private static double EstimateCharacterWidthTwips(char character, int fontSizeTwips, bool isMonospace)
         {
+            if (IsParagraphBreakCharacter(character))
+            {
+                return 0;
+            }
+
             if (isMonospace)
             {
                 return fontSizeTwips * 0.60d;

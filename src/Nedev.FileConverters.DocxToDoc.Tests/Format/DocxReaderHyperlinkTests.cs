@@ -40,8 +40,10 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                         "<w:hyperlink r:id=\"rId1\" w:tooltip=\"Click to visit\">" +
                         "<w:r>" +
                         "<w:rPr>" +
+                        "<w:rFonts w:hAnsi=\"Calibri\"/>" +
                         "<w:color w:val=\"0000FF\"/>" +
                         "<w:u w:val=\"single\"/>" +
+                        "<w:sz w:val=\"28\"/>" +
                         "</w:rPr>" +
                         "<w:t>Example Website</w:t>" +
                         "</w:r>" +
@@ -98,9 +100,11 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             // Assert
             var hyperlinkRun = model.Paragraphs[0].Runs.Find(r => r.Hyperlink != null);
             Assert.NotNull(hyperlinkRun);
-            // Color and underline may not be parsed correctly due to nested rPr in hyperlink
-            // Just verify the hyperlink exists
             Assert.NotNull(hyperlinkRun.Hyperlink);
+            Assert.Equal("0000FF", hyperlinkRun.Properties.Color);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Single, hyperlinkRun.Properties.Underline);
+            Assert.Equal(28, hyperlinkRun.Properties.FontSize);
+            Assert.Equal("Calibri", hyperlinkRun.Properties.FontName);
         }
     }
 }

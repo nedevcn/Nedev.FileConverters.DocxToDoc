@@ -161,6 +161,640 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithHyperlinkImageRun_WritesImagePlaceholderInsideHyperlinkField()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var hyperlink = new HyperlinkModel
+            {
+                TargetUrl = "https://example.com/image"
+            };
+
+            var imageData = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+                0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+                0x54, 0x08, 0xD7, 0x63, 0xF8, 0x0F, 0x00, 0x00,
+                0x01, 0x01, 0x00, 0x05, 0x18, 0xD8, 0x4D, 0x00,
+                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+                0x42, 0x60, 0x82
+            };
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Visit " },
+                    new RunModel
+                    {
+                        Hyperlink = hyperlink,
+                        Image = new ImageModel
+                        {
+                            Data = imageData,
+                            ContentType = "image/png",
+                            Width = 1,
+                            Height = 1
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("Data", out var dataStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "Visit \x0013HYPERLINK \"https://example.com/image\"\x0014\x0001\x0015\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.True(dataStream.GetData().Length > 0);
+
+            int fcPlcffldMom = BitConverter.ToInt32(wordDocData, 154 + (15 * 8));
+            int beginCp = expectedText.IndexOf('\x0013');
+            int separateCp = expectedText.IndexOf('\x0014');
+            int endCp = expectedText.IndexOf('\x0015');
+            int paragraphEndCp = expectedText.Length;
+
+            Assert.Equal(beginCp, BitConverter.ToInt32(tableData, fcPlcffldMom));
+            Assert.Equal(separateCp, BitConverter.ToInt32(tableData, fcPlcffldMom + 4));
+            Assert.Equal(endCp, BitConverter.ToInt32(tableData, fcPlcffldMom + 8));
+            Assert.Equal(paragraphEndCp, BitConverter.ToInt32(tableData, fcPlcffldMom + 12));
+            Assert.Equal(0x0013, BitConverter.ToUInt16(tableData, fcPlcffldMom + 16));
+            Assert.Equal(0x0014, BitConverter.ToUInt16(tableData, fcPlcffldMom + 18));
+            Assert.Equal(0x0015, BitConverter.ToUInt16(tableData, fcPlcffldMom + 20));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithPlainComment_WritesCommentReferenceAndAnnotationStory()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Initials = "JD",
+                Text = "Note",
+                StartCp = 2,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "AB\x0005CD\r\x0005Note\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(4, Fib.CommentReferencePairIndex);
+            Assert.Equal(5, Fib.CommentTextPairIndex);
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 64));
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 76));
+
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            int lcbPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8) + 4);
+            int fcPlcfandTxt = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentTextPairIndex * 8));
+            int lcbPlcfandTxt = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentTextPairIndex * 8) + 4);
+
+            Assert.NotEqual(0, fcPlcfandRef);
+            Assert.True(lcbPlcfandRef > 0);
+            Assert.NotEqual(0, fcPlcfandTxt);
+            Assert.True(lcbPlcfandTxt > 0);
+            Assert.Equal(2, BitConverter.ToInt32(tableData, fcPlcfandRef));
+            Assert.Equal(6, BitConverter.ToInt32(tableData, fcPlcfandRef + 4));
+            Assert.Equal(0, BitConverter.ToInt32(tableData, fcPlcfandTxt));
+            Assert.Equal(5, BitConverter.ToInt32(tableData, fcPlcfandTxt + 4));
+            Assert.Equal(6, BitConverter.ToInt32(tableData, fcPlcfandTxt + 8));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMultiParagraphComment_PreservesInternalParagraphMarksInAnnotationStory()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Initials = "JD",
+                Text = "First\rSecond",
+                StartCp = 2,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "AB\x0005CD\r\x0005First\rSecond\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 64));
+            Assert.Equal(14, BitConverter.ToInt32(wordDocData, 76));
+
+            int fcPlcfandTxt = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentTextPairIndex * 8));
+            Assert.Equal(0, BitConverter.ToInt32(tableData, fcPlcfandTxt));
+            Assert.Equal(13, BitConverter.ToInt32(tableData, fcPlcfandTxt + 4));
+            Assert.Equal(14, BitConverter.ToInt32(tableData, fcPlcfandTxt + 8));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTrailingEmptyCommentParagraph_PreservesFinalEmptyParagraph()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Initials = "JD",
+                Text = "First\r",
+                StartCp = 2,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "AB\x0005CD\r\x0005First\r\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 64));
+            Assert.Equal(8, BitConverter.ToInt32(wordDocData, 76));
+
+            int fcPlcfandTxt = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentTextPairIndex * 8));
+            Assert.Equal(0, BitConverter.ToInt32(tableData, fcPlcfandTxt));
+            Assert.Equal(7, BitConverter.ToInt32(tableData, fcPlcfandTxt + 4));
+            Assert.Equal(8, BitConverter.ToInt32(tableData, fcPlcfandTxt + 8));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithCommentAnchoredAtDocumentEnd_EmitsReferenceAtFinalCp()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Text = "Tail",
+                StartCp = 5,
+                EndCp = 5
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "ABCD\r\x0005\x0005Tail\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 64));
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 76));
+
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            Assert.Equal(5, BitConverter.ToInt32(tableData, fcPlcfandRef));
+            Assert.Equal(6, BitConverter.ToInt32(tableData, fcPlcfandRef + 4));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithOutOfRangeCommentAnchor_ClampsReferenceToDocumentEnd()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Text = "Late",
+                StartCp = 99,
+                EndCp = 99
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "ABCD\r\x0005\x0005Late\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            Assert.Equal(5, BitConverter.ToInt32(tableData, fcPlcfandRef));
+            Assert.Equal(6, BitConverter.ToInt32(tableData, fcPlcfandRef + 4));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithAuthorOnlyComment_DerivesAtrdInitialsFromAuthor()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Author = "Jane Smith",
+                Text = "Note",
+                StartCp = 2,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            string initials = Encoding.Unicode.GetString(tableData, fcPlcfandRef + 8, 20).TrimEnd('\0');
+
+            Assert.Equal("JS", initials);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithExplicitInitialsAndAuthor_PreservesExplicitInitials()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Author = "Jane Smith",
+                Initials = "QA",
+                Text = "Note",
+                StartCp = 2,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            string initials = Encoding.Unicode.GetString(tableData, fcPlcfandRef + 8, 20).TrimEnd('\0');
+
+            Assert.Equal("QA", initials);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithInvalidAnchorComments_SkipsUnsupportedEmission()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Text = "Negative",
+                StartCp = -1,
+                EndCp = 0
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "1",
+                Text = "Inverted",
+                StartCp = 3,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            string expectedText = "ABCD\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(0, BitConverter.ToInt32(wordDocData, 76));
+            Assert.Equal(0, BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8)));
+            Assert.Equal(0, BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8) + 4));
+            Assert.Equal(0, BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentTextPairIndex * 8)));
+            Assert.Equal(0, BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentTextPairIndex * 8) + 4));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTableAndComment_WritesTapxAndAnnotationPairsWithoutCollision()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+
+            var table = new TableModel();
+            var row = new TableRowModel();
+            var cell1 = new TableCellModel { Width = 5000 };
+            var cell2 = new TableCellModel { Width = 5000 };
+            cell1.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Cell 1" } } });
+            cell2.Paragraphs.Add(new ParagraphModel { Runs = { new RunModel { Text = "Cell 2" } } });
+            row.Cells.Add(cell1);
+            row.Cells.Add(cell2);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Text = "Note",
+                StartCp = 2,
+                EndCp = 2
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (4 * 8));
+            int lcbPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (4 * 8) + 4);
+            int fcPlcfandTxt = BitConverter.ToInt32(wordDocData, 154 + (5 * 8));
+            int lcbPlcfandTxt = BitConverter.ToInt32(wordDocData, 154 + (5 * 8) + 4);
+            int fcPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8));
+            int lcbPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8) + 4);
+
+            Assert.True(lcbPlcfandRef > 0);
+            Assert.True(lcbPlcfandTxt > 0);
+            Assert.True(lcbPlcfbteTapx > 0);
+            Assert.NotEqual(fcPlcfandRef, fcPlcfbteTapx);
+            Assert.NotEqual(fcPlcfandTxt, fcPlcfbteTapx);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithCommentAfterHyperlink_AnchorsReferenceAfterVisibleText()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var hyperlink = new HyperlinkModel
+            {
+                TargetUrl = "https://example.com"
+            };
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Visit " },
+                    new RunModel { Text = "Link", Hyperlink = hyperlink }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Text = "Hyperlink comment",
+                StartCp = 10,
+                EndCp = 10
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedMainText = "Visit \x0013HYPERLINK \"https://example.com\"\x0014Link\x0015\x0005\r";
+            string expectedCommentText = "\x0005Hyperlink comment\r";
+            string expectedText = expectedMainText + expectedCommentText;
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            int commentReferenceCp = expectedMainText.IndexOf('\x0005');
+
+            Assert.Equal(commentReferenceCp, BitConverter.ToInt32(tableData, fcPlcfandRef));
+            Assert.Equal(expectedMainText.Length, BitConverter.ToInt32(tableData, fcPlcfandRef + 4));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithReplyComment_SkipsUnsupportedReplyEmission()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "0",
+                Text = "Parent",
+                StartCp = 2,
+                EndCp = 2
+            });
+            model.Comments.Add(new CommentModel
+            {
+                Id = "1",
+                Text = "Reply",
+                StartCp = 2,
+                EndCp = 2,
+                IsReply = true,
+                ParentId = "0"
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            string expectedText = "AB\x0005CD\r\x0005Parent\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(8, BitConverter.ToInt32(wordDocData, 76));
+
+            int fcPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8));
+            int lcbPlcfandRef = BitConverter.ToInt32(wordDocData, 154 + (Fib.CommentReferencePairIndex * 8) + 4);
+
+            Assert.Equal(38, lcbPlcfandRef);
+            Assert.Equal(2, BitConverter.ToInt32(tableData, fcPlcfandRef));
+            Assert.Equal(6, BitConverter.ToInt32(tableData, fcPlcfandRef + 4));
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithAnchorHyperlink_WritesInternalHyperlinkInstruction()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

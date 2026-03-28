@@ -10,14 +10,16 @@ The core package targets `net8.0` and `netstandard2.1`. The CLI targets `net8.0`
 
 The implementation is no longer limited to plain text and basic formatting. In the current repository state, the converter supports:
 
-- paragraph and run text serialization
+- paragraph and run text serialization, including inline tabs, positioned tabs, symbol characters, hyphen control characters, and manual break characters
 - character formatting through CHPX
 - paragraph formatting through PAPX, including alignment, spacing, line spacing, and indent
 - sections with page size and page margins
 - numbering and list plumbing
-- bookmarks and comments
-- nested field markers and hyperlink fields
-- native DOC picture blocks in the `Data` stream
+- bookmarks, comment parsing with main-document anchor CP recovery and reply metadata, plus top-level plain-text comment emission in the writer with document-end anchor fallback, author-to-initials descriptor fallback, and paragraph-break preservation inside annotation stories
+- core and extended document property parsing from `docProps/core.xml` and `docProps/app.xml`
+- simple and nested field markers, plus hyperlink fields
+- footnote and endnote parsing from `footnotes.xml` / `endnotes.xml`, main-document reference CP recovery, bounded DOC note-story emission for plain-text notes with preserved internal paragraph breaks, bounded separator / continuation-separator / continuation-notice special-story support, and bounded single-mark custom note reference support
+- native DOC picture blocks in the `Data` stream, including image placeholders inside hyperlink fields
 - OfficeArt/Escher output for PNG, JPEG, EMF, and WMF images
 - anchored/floating image geometry with page, margin, and paragraph-relative positioning heuristics
 - table rows, cell markers, row markers, and TAPX output
@@ -29,6 +31,7 @@ The implementation is no longer limited to plain text and basic formatting. In t
 - table border conflict heuristics that prefer explicit cell borders over table-level inside borders on shared boundaries, including explicit `none` / `nil` suppression on shared edges
 - table preferred width heuristics from `tblW` with `dxa`, `pct`, and `auto` behavior for scaling grid-based and explicit cell widths
 - row-level mixed width allocation heuristics that reconcile `tcW`, `tblW`, `tblGrid`, `gridSpan`, and unresolved auto-width cells before wrapped-line estimation
+- auto-width cell overhead reservation for horizontal padding, resolved borders, and cell spacing during remaining-width allocation
 - overcommitted mixed-width shrink heuristics that reserve a minimum width for auto cells and shrink resolved widths first when explicit widths already exceed `tblW`
 - mixed explicit/grid/auto overflow heuristics that prefer shrinking explicit-width cells before narrowing grid-fallback cells when unresolved auto cells still need reserved width
 - mixed explicit overflow heuristics that preserve percentage-based `tcW` cells ahead of absolute `dxa` cells when the row still needs to reserve width for unresolved auto cells
@@ -38,21 +41,23 @@ The implementation is no longer limited to plain text and basic formatting. In t
 - table cell spacing (`tblCellSpacing`) heuristics affecting effective cell width and row advance
 - run-aware paragraph width estimation that uses per-run font size and a character-width heuristic instead of only raw character count
 
-Current local validation status: `137/137` tests passing.
+Current local validation status: `214/214` tests passing, and the package builds and packs successfully from the current workspace.
 
 ## Feature Coverage
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Paragraphs and runs | ✅ Implemented | Text, basic run formatting, line/paragraph spacing, indent, and run-aware width heuristics are serialized/applied. |
-| Styles and fonts | ✅ Implemented | Style sheet and font table emission are present. |
-| Sections | ✅ Implemented | Page size, margins, and page-number start metadata are supported. |
-| Numbering and lists | ✅ Implemented | Abstract numbering and LFO/LST structures are emitted. |
-| Fields and hyperlinks | ✅ Implemented | Field boundaries, nested fields, and hyperlink instructions are emitted. |
-| Images | ✅ Implemented with heuristics | Inline and floating images are written via DOC picture blocks and OfficeArt records. |
-| Tables | ✅ Implemented with heuristics | Table width/layout logic uses `tcW` including `pct` cell widths, `tblW`, `tblGrid`, `gridSpan`, row-level mixed width allocation for auto cells, overcommitted-width shrink rules including explicit-before-grid shrink preference in mixed overflow rows and pct-before-dxa preservation in mixed explicit overflow rows, cell padding including explicit zero `tcMar` overrides, outer and inside border thickness, border conflict rules including explicit `none` / `nil` suppression on shared edges, row height hints, exact-height overflow clipping, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
-| Comments and bookmarks | ✅ Implemented | Parsed and emitted in DOC structures. |
-| Advanced Word features | ⚠️ Partial / unsupported | SmartArt, equations, VBA/macros, tracked changes fidelity, and full layout parity are not complete. |
+| Paragraphs and runs | Implemented | Text, basic run formatting, hyperlink run formatting, inline tabs including `w:ptab`, symbol characters, line/paragraph spacing, indent, and run-aware width heuristics are serialized/applied. |
+| Styles and fonts | Implemented | Style sheet and font table emission are present. |
+| Sections | Implemented | Page size, margins, and page-number start metadata are supported. |
+| Document properties | Implemented | Core and extended metadata are parsed from `docProps/core.xml` and `docProps/app.xml`. |
+| Numbering and lists | Implemented | Abstract numbering and LFO/LST structures are emitted. |
+| Fields and hyperlinks | Implemented | Simple-field and nested-field boundaries are modeled, and hyperlink instructions are emitted. |
+| Footnotes and endnotes | Implemented with bounded fidelity | Plain-text note text and main-document reference CPs are parsed from `footnotes.xml` and `endnotes.xml`; multi-paragraph note text is preserved in the current string model, and the writer emits note references plus footnote/endnote stories and PLCFs. `separator`, `continuationSeparator`, and `continuationNotice` special stories are preserved and emitted through bounded header-story support, and single visible custom note marks are recovered and emitted through the current plain-text model, but multi-fragment custom marks and fuller note fidelity are not complete. |
+| Images | Implemented with heuristics | Inline and floating images are written via DOC picture blocks and OfficeArt records, including hyperlink-wrapped image placeholders. |
+| Tables | Implemented with heuristics | Table width/layout logic uses `tcW` including `pct` cell widths, `tblW`, `tblGrid`, `gridSpan`, row-level mixed width allocation for auto cells including horizontal overhead reservation for padding/borders/cell spacing, overcommitted-width shrink rules including explicit-before-grid shrink preference in mixed overflow rows and pct-before-dxa preservation in mixed explicit overflow rows, cell padding including explicit zero `tcMar` overrides, outer and inside border thickness, border conflict rules including explicit `none` / `nil` suppression on shared edges, row height hints, exact-height overflow clipping, cell spacing, and cell vertical alignment on both horizontal and vertical geometry paths, but is not a full Word layout engine. |
+| Comments and bookmarks | Partial | Bookmarks are parsed and emitted in DOC structures; comments are parsed from `comments.xml` and `commentsExtended.xml` with main-document anchor CP recovery for ranges and collapsed references, plus reply/done metadata. Multi-paragraph comment text is preserved in the current string model, and the writer emits top-level plain-text comments into simplified DOC annotation structures, clamps document-end or overflow anchors to the final visible CP, and derives missing descriptor initials from comment authors, but reply/threaded comments and full annotation fidelity are not complete. |
+| Advanced Word features | Partial / unsupported | SmartArt, equations, VBA/macros, tracked changes fidelity, and full layout parity are not complete. |
 
 ## Known Limits
 
@@ -60,20 +65,18 @@ This converter now covers a broad set of common Word constructs, but it still re
 
 - paragraph height estimation is width-aware and run-aware, but still heuristic rather than font-metric exact
 - floating image placement is substantially improved, but not a full Word-compatible layout engine
-- table layout uses inferred and preferred widths, `tcW` percentage cell widths, mixed row-level width allocation, overcommitted-width shrink heuristics including explicit-before-grid overflow handling and pct-before-dxa preservation, padding including explicit zero cell-margin overrides, outer and inside border thickness, border conflict rules, row height hints, exact-height overflow clipping, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
+- table layout uses inferred and preferred widths, `tcW` percentage cell widths, mixed row-level width allocation including auto-cell horizontal overhead reservation, overcommitted-width shrink heuristics including explicit-before-grid overflow handling and pct-before-dxa preservation, padding including explicit zero cell-margin overrides, outer and inside border thickness, border conflict rules, row height hints, exact-height overflow clipping, cell spacing, row-height heuristics, and coarse cell vertical alignment behavior, but does not yet model every table rule Word applies
+- footnotes and endnotes now preserve paragraph breaks in plain-text note stories, main-document reference recovery, bounded `separator` / `continuationSeparator` / `continuationNotice` special stories, and bounded single-mark custom note references, but multi-fragment custom markers and fuller DOC note fidelity are still bounded
+- comments now preserve anchor CPs, reply metadata, and paragraph breaks in plain-text annotation stories; reply/threaded comments and full DOC annotation fidelity remain incomplete, while unsupported malformed anchors are filtered or clamped rather than fully modeled
 - advanced Office features such as SmartArt, equations, macros, and exact compatibility behavior are not implemented
 
 ## Next Phase
 
-The next fidelity phase is focused on deeper table and layout behavior:
+The next practical phase should stay narrow and sample-driven rather than opening another broad layout front:
 
-- more exact table layout beyond width inference alone
-- deeper mixed-width allocation rules for more Word-like handling of exceptional column combinations
-- finer shrink behavior for heavily overcommitted mixed-width rows and edge-case span combinations
-- richer table border style precedence beyond current thickness and explicit-override geometry rules
-- deeper row rules such as richer interaction between explicit heights and complex mixed content inside the same row
-- improved line measurement and paragraph height estimation beyond the current per-run heuristic
-- additional parity work for complex floating objects and edge-case Word documents
+- only deepen footnote/endnote fidelity if real documents require multi-fragment custom-mark behavior or richer note formatting than the current paragraph-preserving plain-text model with bounded special-story support
+- keep comments/bookmarks in their current bounded state unless a specific need justifies fuller DOC annotation fidelity
+- revisit deeper table and layout parity only after concrete document samples show a gap that the current heuristics cannot cover
 
 ## Installation
 

@@ -55,8 +55,8 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                 Assert.Contains("Cell 1\r\x0007Cell 2\r\x0007\r", text);
 
                 // FIB offsets for Table (TAPX)
-                int fcPlcfbteTapx = BitConverter.ToInt32(wordDocData, 186);
-                int lcbPlcfbteTapx = BitConverter.ToInt32(wordDocData, 190);
+                int fcPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8));
+                int lcbPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8) + 4);
 
                 Assert.NotEqual(0, fcPlcfbteTapx);
                 Assert.True(lcbPlcfbteTapx > 0);
@@ -813,6 +813,38 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int topWithNarrowRemainingWidth = GetAutoRemainingWidthImageTop(3600, pngBytes);
 
             Assert.True(topWithNarrowRemainingWidth > topWithWideRemainingWidth);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_AutoCellPaddingReservesHorizontalOverhead()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            var paddedTops = GetAutoCellOverheadAwareImageTops(5200, addPadding: true, addBorders: false, pngBytes);
+
+            Assert.True(paddedTops.firstCellImageTop <= paddedTops.secondCellImageTop, $"firstCellImageTop={paddedTops.firstCellImageTop}, secondCellImageTop={paddedTops.secondCellImageTop}");
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TablePreferredWidthDxa_AutoCellBordersReserveHorizontalOverhead()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            var borderedTops = GetAutoCellOverheadAwareImageTops(5200, addPadding: false, addBorders: true, pngBytes);
+
+            Assert.True(borderedTops.firstCellImageTop <= borderedTops.secondCellImageTop, $"firstCellImageTop={borderedTops.firstCellImageTop}, secondCellImageTop={borderedTops.secondCellImageTop}");
         }
 
         [Fact]
@@ -2001,6 +2033,125 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int recordOffset = fcPlcfspaMom + 8;
 
             return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static (int firstCellImageTop, int secondCellImageTop) GetAutoCellOverheadAwareImageTops(int preferredWidthTwips, bool addPadding, bool addBorders, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel { PreferredWidthValue = preferredWidthTwips, PreferredWidthUnit = TableWidthUnit.Dxa };
+
+            var row = new TableRowModel();
+            var firstCell = new TableCellModel();
+            if (addPadding)
+            {
+                firstCell.PaddingLeftTwips = 360;
+                firstCell.PaddingRightTwips = 360;
+                firstCell.HasLeftPaddingOverride = true;
+                firstCell.HasRightPaddingOverride = true;
+            }
+
+            if (addBorders)
+            {
+                firstCell.BorderLeftTwips = 120;
+                firstCell.BorderRightTwips = 120;
+                firstCell.BorderLeftStyle = BorderStyle.Single;
+                firstCell.BorderRightStyle = BorderStyle.Single;
+                firstCell.HasLeftBorderOverride = true;
+                firstCell.HasRightBorderOverride = true;
+            }
+
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should keep roughly the same usable width after horizontal overhead is reserved for an auto-width cell.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            var secondCell = new TableCellModel();
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should keep roughly the same usable width after horizontal overhead is reserved for an auto-width cell.",
+                        Properties =
+                        {
+                            FontSize = 24
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int firstRecordOffset = fcPlcfspaMom + 8;
+            int secondRecordOffset = firstRecordOffset + 26;
+
+            return (
+                BitConverter.ToInt32(tableData, firstRecordOffset + 8),
+                BitConverter.ToInt32(tableData, secondRecordOffset + 8));
         }
 
         private static int GetOvercommittedAutoCellImageTop(int preferredWidthTwips, byte[] pngBytes)

@@ -111,6 +111,83 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return ms.ToArray();
         }
 
+        private byte[] CreateDocxWithHyperlinkImage()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var contentTypesEntry = archive.CreateEntry("[Content_Types].xml");
+                using (var stream = contentTypesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
+                        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
+                        "<Default Extension=\"png\" ContentType=\"image/png\"/>" +
+                        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>" +
+                        "</Types>");
+                }
+
+                var relsEntry = archive.CreateEntry("_rels/.rels");
+                using (var stream = relsEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
+                        "</Relationships>");
+                }
+
+                var docRelsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var stream = docRelsEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/image1.png\"/>" +
+                        "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"https://example.com/image\" TargetMode=\"External\"/>" +
+                        "</Relationships>");
+                }
+
+                var imageEntry = archive.CreateEntry("word/media/image1.png");
+                using (var stream = imageEntry.Open())
+                {
+                    byte[] pngData = new byte[]
+                    {
+                        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+                        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+                        0x54, 0x08, 0xD7, 0x63, 0xF8, 0x0F, 0x00, 0x00,
+                        0x01, 0x01, 0x00, 0x05, 0x18, 0xD8, 0x4D, 0x00,
+                        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+                        0x42, 0x60, 0x82
+                    };
+                    stream.Write(pngData, 0, pngData.Length);
+                }
+
+                var docEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = docEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" " +
+                        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" " +
+                        "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" " +
+                        "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\">" +
+                        "<w:body><w:p>" +
+                        "<w:r><w:t>Before </w:t></w:r>" +
+                        "<w:hyperlink r:id=\"rId2\"><w:r><w:drawing><wp:inline><wp:extent cx=\"914400\" cy=\"914400\"/><a:graphic><a:graphicData><pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:blipFill><a:blip r:embed=\"rId1\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:hyperlink>" +
+                        "<w:r><w:t> After</w:t></w:r>" +
+                        "</w:p></w:body></w:document>");
+                }
+            }
+
+            return ms.ToArray();
+        }
+
         [Fact]
         public void ReadDocument_WithImage_ParsesImageData()
         {
@@ -235,6 +312,24 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.False(imageRun.Image.AllowOverlap);
             Assert.Equal(96, imageRun.Image.Width);
             Assert.Equal(48, imageRun.Image.Height);
+        }
+
+        [Fact]
+        public void ReadDocument_WithHyperlinkImage_PreservesImageAndHyperlinkMetadata()
+        {
+            byte[] docxData = CreateDocxWithHyperlinkImage();
+            using var ms = new MemoryStream(docxData);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(ms);
+
+            var model = reader.ReadDocument();
+
+            var imageRun = Assert.Single(model.Paragraphs[0].Runs, run => run.Image != null);
+            Assert.NotNull(imageRun.Image);
+            Assert.NotNull(imageRun.Hyperlink);
+            Assert.Equal("rId1", imageRun.Image.RelationshipId);
+            Assert.NotNull(imageRun.Image.Data);
+            Assert.True(imageRun.Image.Data.Length > 0);
+            Assert.Equal("https://example.com/image", imageRun.Hyperlink!.TargetUrl);
         }
     }
 }

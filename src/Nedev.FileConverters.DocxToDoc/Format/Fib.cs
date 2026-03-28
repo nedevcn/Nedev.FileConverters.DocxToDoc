@@ -9,6 +9,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
     public class Fib
     {
         private const ushort HasPicturesMask = 0x0008;
+        public const int FootnoteReferencePairIndex = 2;
+        public const int FootnoteTextPairIndex = 3;
+        public const int CommentReferencePairIndex = 4;
+        public const int CommentTextPairIndex = 5;
+        public const int HeaderStoryPairIndex = 11;
+        public const int EndnoteReferencePairIndex = 46;
+        public const int EndnoteTextPairIndex = 47;
+        public const int ChpxPairIndex = 12;
+        public const int PapxPairIndex = 13;
+        public const int ClxPairIndex = 33;
+        public const int TapxPairIndex = 54;
 
         public ushort wIdent { get; set; } = 0xA5EC;
         public ushort nFib { get; set; } = 0x00C1; // Microsoft Word 97-2003
@@ -25,6 +36,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         public int fcStshf { get; set; } // Offset to STSH in 1Table stream
         public int lcbStshf { get; set; } // Size of STSH
+
+        public int fcPlcffndRef { get; set; } // Footnote reference PLCF
+        public int lcbPlcffndRef { get; set; }
+
+        public int fcPlcffndTxt { get; set; } // Footnote text PLCF
+        public int lcbPlcffndTxt { get; set; }
+
+        public int fcPlcfHdd { get; set; } // Header document PLCF
+        public int lcbPlcfHdd { get; set; }
 
         public int fcPlcfbteChpx { get; set; }
         public int lcbPlcfbteChpx { get; set; }
@@ -63,10 +83,23 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         public int fcSttbfbkmk { get; set; } // Bookmark names
         public int lcbSttbfbkmk { get; set; }
 
+        // The writer still uses a simplified Fc/Lcb map. Footnotes/comments now occupy
+        // their early story slots, CHPX/PAPX use their dedicated pairs, and TAPX
+        // remains parked in a custom slot until the broader FIB mapping is normalized.
+        public int fcPlcfandRef { get; set; }
+        public int lcbPlcfandRef { get; set; }
+        public int fcPlcfandTxt { get; set; }
+        public int lcbPlcfandTxt { get; set; }
+        public int fcPlcfendRef { get; set; }
+        public int lcbPlcfendRef { get; set; }
+        public int fcPlcfendTxt { get; set; }
+        public int lcbPlcfendTxt { get; set; }
+
         public int ccpText { get; set; } // Length of plain text document
         public int ccpFtn { get; set; } // Length of footnotes
         public int ccpHdd { get; set; } // Length of headers
         public int ccpAtn { get; set; } // Length of comments
+        public int ccpEdn { get; set; } // Length of endnotes
 
         public void WriteTo(BinaryWriter writer)
         {
@@ -100,6 +133,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             BitConverter.GetBytes(ccpFtn).CopyTo(rgLw97, 4);
             BitConverter.GetBytes(ccpHdd).CopyTo(rgLw97, 8);
             BitConverter.GetBytes(ccpAtn).CopyTo(rgLw97, 12);
+            BitConverter.GetBytes(ccpEdn).CopyTo(rgLw97, 16);
             
             writer.Write(rgLw97);
 
@@ -108,7 +142,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             
             // We need to write 93 pairs of (fc, lcb) = 93 * 8 = 744 bytes (offset 154-897)
             byte[] rgFcLcb = new byte[744];
-            
+
             void SetPair(int index, int fc, int lcb)
             {
                 BitConverter.GetBytes(fc).CopyTo(rgFcLcb, index * 8);
@@ -116,17 +150,24 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             SetPair(0, fcStshf, lcbStshf);
-            SetPair(2, fcPlcfbtePapx, lcbPlcfbtePapx);
-            SetPair(3, fcPlcfbteChpx, lcbPlcfbteChpx);
-            SetPair(4, fcPlcfbteTapx, lcbPlcfbteTapx);
+            SetPair(FootnoteReferencePairIndex, fcPlcffndRef, lcbPlcffndRef);
+            SetPair(FootnoteTextPairIndex, fcPlcffndTxt, lcbPlcffndTxt);
+            SetPair(TapxPairIndex, fcPlcfbteTapx, lcbPlcfbteTapx);
             SetPair(6, fcPlcfsed, lcbPlcfsed);
             SetPair(10, fcSttbLst, lcbSttbLst);
-            SetPair(11, fcClx, lcbClx);
+            SetPair(HeaderStoryPairIndex, fcPlcfHdd, lcbPlcfHdd);
+            SetPair(ChpxPairIndex, fcPlcfbteChpx, lcbPlcfbteChpx);
+            SetPair(PapxPairIndex, fcPlcfbtePapx, lcbPlcfbtePapx);
             SetPair(14, fcSttbfffn, lcbSttbfffn);
             SetPair(15, fcPlcffldMom, lcbPlcffldMom);
+            SetPair(ClxPairIndex, fcClx, lcbClx);
             SetPair(40, fcPlcfspaMom, lcbPlcfspaMom);
             SetPair(50, fcDggInfo, lcbDggInfo);
             SetPair(53, fcPlfLfo, lcbPlfLfo);
+            SetPair(CommentReferencePairIndex, fcPlcfandRef, lcbPlcfandRef);
+            SetPair(CommentTextPairIndex, fcPlcfandTxt, lcbPlcfandTxt);
+            SetPair(EndnoteReferencePairIndex, fcPlcfendRef, lcbPlcfendRef);
+            SetPair(EndnoteTextPairIndex, fcPlcfendTxt, lcbPlcfendTxt);
 
             writer.Write(rgFcLcb);
         }

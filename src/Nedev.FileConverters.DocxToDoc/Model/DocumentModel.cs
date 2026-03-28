@@ -15,7 +15,15 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public List<AbstractNumberingModel> AbstractNumbering { get; } = new List<AbstractNumberingModel>();
         public List<NumberingInstanceModel> NumberingInstances { get; } = new List<NumberingInstanceModel>();
         public List<BookmarkModel> Bookmarks { get; } = new List<BookmarkModel>();
+        public List<FootnoteModel> Footnotes { get; } = new List<FootnoteModel>();
+        public List<EndnoteModel> Endnotes { get; } = new List<EndnoteModel>();
         public List<CommentModel> Comments { get; } = new List<CommentModel>();
+        public string? FootnoteSeparatorText { get; set; }
+        public string? FootnoteContinuationSeparatorText { get; set; }
+        public string? FootnoteContinuationNoticeText { get; set; }
+        public string? EndnoteSeparatorText { get; set; }
+        public string? EndnoteContinuationSeparatorText { get; set; }
+        public string? EndnoteContinuationNoticeText { get; set; }
         public DocumentProperties Properties { get; } = new DocumentProperties();
 
         /// <summary>
@@ -365,6 +373,60 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public int StartCp { get; set; }
         public int EndCp { get; set; }
         public bool IsCollapsed { get; set; }
+    }
+
+    /// <summary>
+    /// Represents a footnote in the document.
+    /// </summary>
+    public class FootnoteModel
+    {
+        /// <summary>
+        /// Gets or sets the unique identifier of the footnote.
+        /// </summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the plain-text content of the footnote.
+        /// </summary>
+        public string Text { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the character position in the main story where the footnote reference appears.
+        /// A value of -1 means the reference was not resolved in the main document.
+        /// </summary>
+        public int ReferenceCp { get; set; } = -1;
+
+        /// <summary>
+        /// Gets or sets the plain-text custom reference mark that follows the footnote reference in the main story.
+        /// </summary>
+        public string? CustomMarkText { get; set; }
+    }
+
+    /// <summary>
+    /// Represents an endnote in the document.
+    /// </summary>
+    public class EndnoteModel
+    {
+        /// <summary>
+        /// Gets or sets the unique identifier of the endnote.
+        /// </summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the plain-text content of the endnote.
+        /// </summary>
+        public string Text { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the character position in the main story where the endnote reference appears.
+        /// A value of -1 means the reference was not resolved in the main document.
+        /// </summary>
+        public int ReferenceCp { get; set; } = -1;
+
+        /// <summary>
+        /// Gets or sets the plain-text custom reference mark that follows the endnote reference in the main story.
+        /// </summary>
+        public string? CustomMarkText { get; set; }
     }
 
     /// <summary>

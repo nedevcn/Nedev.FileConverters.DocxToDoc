@@ -79,11 +79,12 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             byte[] wordDocData = wordDocStream.GetData();
 
             // Check that the FIB was updated with non-zero Papx PLCF offsets
-            // The PLCF for Papx is index 2 in RgFcLcb (offset 154 + 2*8 = 170)
+            // The PLCF for Papx uses Fib.PapxPairIndex in the simplified Fc/Lcb map.
             // Fib size is >= 154 + 744 = 898
             Assert.True(wordDocData.Length >= 898);
-            int fcPlcfbtePapx = BitConverter.ToInt32(wordDocData, 170);
-            int lcbPlcfbtePapx = BitConverter.ToInt32(wordDocData, 174);
+            int papxOffset = 154 + (Fib.PapxPairIndex * 8);
+            int fcPlcfbtePapx = BitConverter.ToInt32(wordDocData, papxOffset);
+            int lcbPlcfbtePapx = BitConverter.ToInt32(wordDocData, papxOffset + 4);
             
             Assert.NotEqual(0, fcPlcfbtePapx);
             Assert.True(lcbPlcfbtePapx > 0);
