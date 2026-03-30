@@ -2732,6 +2732,138 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithShortSideAliases_UsesMarginAnchorsAndFlags()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            var model = new DocumentModel();
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = 1200,
+                MarginBottom = 1800
+            });
+
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            HorizontalRelativeTo = "left",
+                            VerticalRelativeTo = "top",
+                            PositionXTwips = 360,
+                            PositionYTwips = 540
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+
+            Assert.Equal(1360, BitConverter.ToInt32(tableData, fcPlcfspaMom + 12));
+            Assert.Equal(1740, BitConverter.ToInt32(tableData, fcPlcfspaMom + 16));
+
+            int flags = BitConverter.ToInt32(tableData, fcPlcfspaMom + 30);
+            Assert.Equal(1, (flags >> 7) & 0x3);
+            Assert.Equal(1, (flags >> 5) & 0x3);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithInnerOuterAliases_UsesMarginAnchorsAndFlags()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            var model = new DocumentModel();
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = 1200,
+                MarginBottom = 1800
+            });
+
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            HorizontalRelativeTo = "inner",
+                            VerticalRelativeTo = "outer",
+                            PositionXTwips = 360,
+                            PositionYTwips = 540
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+
+            Assert.Equal(1360, BitConverter.ToInt32(tableData, fcPlcfspaMom + 12));
+            Assert.Equal(1740, BitConverter.ToInt32(tableData, fcPlcfspaMom + 16));
+
+            int flags = BitConverter.ToInt32(tableData, fcPlcfspaMom + 30);
+            Assert.Equal(1, (flags >> 7) & 0x3);
+            Assert.Equal(1, (flags >> 5) & 0x3);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithParagraphRelativeImageInLaterParagraph_AccumulatesEstimatedParagraphTop()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
