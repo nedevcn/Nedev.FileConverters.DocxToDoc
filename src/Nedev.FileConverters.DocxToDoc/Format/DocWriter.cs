@@ -777,6 +777,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         int rowHeightTwips = 0;
                         int gridColumnIndex = 0;
+                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int verticalOffsetTwips)>();
 
                         foreach (var cell in row.Cells)
                         {
@@ -785,20 +786,46 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 ? cell.Width
                                 : ResolveTableCellWidth(table, gridColumnIndex, gridSpan, tableAvailableWidthTwips);
                             int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
-                            int cellAvailableWidthTwips = Math.Max(720, cellWidthTwips - horizontalCellPaddingTwips);
-                            rowHeightTwips = Math.Max(rowHeightTwips, EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips));
-                            foreach (var cellBlock in EnumerateTableCellBlocks(cell))
+                            int horizontalCellSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
+                            int cellAvailableWidthTwips = Math.Max(720, cellWidthTwips - horizontalCellPaddingTwips - horizontalCellSpacingTwips);
+                            int cellContentHeightTwips = EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips);
+                            int topPaddingTwips = ResolveTableCellTopPaddingTwips(table, cell);
+                            int bottomPaddingTwips = ResolveTableCellBottomPaddingTwips(table, cell);
+                            int topSpacingTwips = ResolveTableCellTopSpacingTwips(table);
+                            int bottomSpacingTwips = ResolveTableCellBottomSpacingTwips(table);
+                            int cellTotalHeightTwips = topSpacingTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomSpacingTwips;
+                            rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
+                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topSpacingTwips + topPaddingTwips, 0));
+                            gridColumnIndex += gridSpan;
+                        }
+
+                        rowHeightTwips = ResolveRowHeightTwips(row, Math.Max(276, rowHeightTwips));
+
+                        for (int cellIndex = 0; cellIndex < cellLayouts.Count; cellIndex++)
+                        {
+                            var layout = cellLayouts[cellIndex];
+                            int verticalOffsetTwips = ResolveTableCellVerticalAlignmentOffset(layout.cell, rowHeightTwips, layout.totalHeightTwips);
+                            cellLayouts[cellIndex] = (layout.cell, layout.availableWidthTwips, layout.totalHeightTwips, layout.topOffsetTwips, verticalOffsetTwips);
+                        }
+
+                        foreach (var cellLayout in cellLayouts)
+                        {
+                            int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
+                            foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
                             {
                                 if (cellBlock is ParagraphModel paragraph)
                                 {
-                                    int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellAvailableWidthTwips);
+                                    int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellLayout.availableWidthTwips);
                                     int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
-                                    int paragraphTopTwips = verticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
+                                    int paragraphTopTwips = verticalCursorTwips + cellVerticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
                                     AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, inTable: true);
+                                    cellVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
                                 }
                                 else if (cellBlock is TableModel nestedTable)
                                 {
-                                    AppendStructuredHeaderFooterTable(nestedTable, layoutSectionForStory, cellAvailableWidthTwips, ref verticalCursorTwips, ref localStoryLength);
+                                    int nestedVerticalCursorTwips = verticalCursorTwips + cellVerticalCursorTwips;
+                                    AppendStructuredHeaderFooterTable(nestedTable, layoutSectionForStory, cellLayout.availableWidthTwips, ref nestedVerticalCursorTwips, ref localStoryLength);
+                                    cellVerticalCursorTwips = Math.Max(cellVerticalCursorTwips, nestedVerticalCursorTwips - verticalCursorTwips);
                                 }
                             }
 
@@ -812,7 +839,6 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             cellMarkSprms.Add(0x24);
                             cellMarkSprms.Add(1);
                             papxWriter.AddParagraph(cellMarkStart, currentCp, cellMarkSprms.ToArray());
-                            gridColumnIndex += gridSpan;
                         }
 
                         int rowMarkStart = currentCp;
@@ -832,7 +858,6 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         tapSprms.AddRange(defTable);
 
                         tapxWriter.AddRow(rowMarkStart, currentCp, tapSprms.ToArray());
-                        rowHeightTwips = ResolveRowHeightTwips(row, Math.Max(276, rowHeightTwips));
                         verticalCursorTwips += rowHeightTwips;
                     }
                 }
