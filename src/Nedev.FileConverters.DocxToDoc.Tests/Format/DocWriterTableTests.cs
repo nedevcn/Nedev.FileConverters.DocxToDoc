@@ -1063,6 +1063,52 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClipsNestedTableOverflowingContentForLaterParagraphs_WithLargePositiveSpacingAfter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetNestedOverflowClippedImageTop(0, TableRowHeightRule.Auto, pngBytes, firstNestedParagraphSpacingAfterTwips: 1200);
+            int topWithExactHeight = GetNestedOverflowClippedImageTop(1200, TableRowHeightRule.Exact, pngBytes, firstNestedParagraphSpacingAfterTwips: 1200);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsNestedLaterParagraphTop_WhenSpacingBeforeExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetNestedOverflowClippedImageTop(
+                0,
+                TableRowHeightRule.Auto,
+                pngBytes,
+                firstNestedParagraphSpacingAfterTwips: 0,
+                secondNestedParagraphSpacingBeforeTwips: 1800,
+                secondNestedParagraphPositionYTwips: 0);
+            int topWithExactHeight = GetNestedOverflowClippedImageTop(
+                1200,
+                TableRowHeightRule.Exact,
+                pngBytes,
+                firstNestedParagraphSpacingAfterTwips: 0,
+                secondNestedParagraphSpacingBeforeTwips: 1800,
+                secondNestedParagraphPositionYTwips: 0);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableRowHeightExact_ClipsOverflowingCellContentForLaterParagraphs_WithNegativeSpacingBefore()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1094,6 +1140,41 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int topWithExactHeight = GetOverflowClippedImageTop(1200, TableRowHeightRule.Exact, pngBytes, secondParagraphSpacingBeforeTwips: 0, firstParagraphSpacingAfterTwips: -600);
 
             Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClipsOverflowingCellContentForLaterParagraphs_WithLargePositiveSpacingAfter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedImageTop(0, TableRowHeightRule.Auto, pngBytes, secondParagraphSpacingBeforeTwips: 0, firstParagraphSpacingAfterTwips: 1200);
+            int topWithExactHeight = GetOverflowClippedImageTop(1200, TableRowHeightRule.Exact, pngBytes, secondParagraphSpacingBeforeTwips: 0, firstParagraphSpacingAfterTwips: 1200);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsLaterParagraphTop_WhenSpacingBeforeExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedImageTop(0, TableRowHeightRule.Auto, pngBytes, secondParagraphSpacingBeforeTwips: 1800, firstParagraphSpacingAfterTwips: 0, secondParagraphPositionYTwips: 0);
+            int topWithExactHeight = GetOverflowClippedImageTop(1200, TableRowHeightRule.Exact, pngBytes, secondParagraphSpacingBeforeTwips: 1800, firstParagraphSpacingAfterTwips: 0, secondParagraphPositionYTwips: 0);
+
+            Assert.True(topWithAutoHeight > 1200);
+            Assert.True(topWithExactHeight <= 1200);
         }
 
         private static int GetSecondCellImageTop(bool useExplicitWidth, bool addPadding, byte[] pngBytes)
@@ -2928,7 +3009,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
-        private static int GetOverflowClippedImageTop(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes, int secondParagraphSpacingBeforeTwips = 0, int firstParagraphSpacingAfterTwips = 0)
+        private static int GetOverflowClippedImageTop(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes, int secondParagraphSpacingBeforeTwips = 0, int firstParagraphSpacingAfterTwips = 0, int secondParagraphPositionYTwips = 50)
         {
             var model = new DocumentModel();
             var table = new TableModel();
@@ -2971,7 +3052,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                             Height = 48,
                             LayoutType = ImageLayoutType.Floating,
                             VerticalRelativeTo = "paragraph",
-                            PositionYTwips = 50
+                            PositionYTwips = secondParagraphPositionYTwips
                         }
                     }
                 }
@@ -2998,7 +3079,13 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
-        private static int GetNestedOverflowClippedImageTop(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes, int firstNestedParagraphSpacingAfterTwips = 0)
+        private static int GetNestedOverflowClippedImageTop(
+            int rowHeightTwips,
+            TableRowHeightRule heightRule,
+            byte[] pngBytes,
+            int firstNestedParagraphSpacingAfterTwips = 0,
+            int secondNestedParagraphSpacingBeforeTwips = 0,
+            int secondNestedParagraphPositionYTwips = 50)
         {
             var model = new DocumentModel();
             var outerTable = new TableModel();
@@ -3029,6 +3116,10 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             });
             nestedCell.Content.Add(new ParagraphModel
             {
+                Properties =
+                {
+                    SpacingBeforeTwips = secondNestedParagraphSpacingBeforeTwips
+                },
                 Runs =
                 {
                     new RunModel
@@ -3041,7 +3132,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                             Height = 48,
                             LayoutType = ImageLayoutType.Floating,
                             VerticalRelativeTo = "paragraph",
-                            PositionYTwips = 50
+                            PositionYTwips = secondNestedParagraphPositionYTwips
                         }
                     }
                 }

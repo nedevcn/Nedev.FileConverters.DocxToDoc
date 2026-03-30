@@ -1910,6 +1910,38 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsSecondParagraphFloatingImageTop_WithLargePositiveSpacingAfter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(0, TableRowHeightRule.Auto, null, firstParagraphSpacingAfterTwips: 1200);
+            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(900, TableRowHeightRule.Exact, null, firstParagraphSpacingAfterTwips: 1200);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClampsSecondParagraphTop_WhenSpacingBeforeExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(
+                0,
+                TableRowHeightRule.Auto,
+                null,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphSpacingBeforeTwips: 1800);
+            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(
+                900,
+                TableRowHeightRule.Exact,
+                null,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphSpacingBeforeTwips: 1800);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsNestedTableFloatingImageTop()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1927,6 +1959,38 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             int topWithAutoHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(0, TableRowHeightRule.Auto, -600);
             int topWithExactHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(1200, TableRowHeightRule.Exact, -600);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsNestedTableFloatingImageTop_WithLargePositiveSpacingAfter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(0, TableRowHeightRule.Auto, 1200);
+            int topWithExactHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(1200, TableRowHeightRule.Exact, 1200);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClampsNestedSecondParagraphTop_WhenSpacingBeforeExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(
+                0,
+                TableRowHeightRule.Auto,
+                firstNestedParagraphSpacingAfterTwips: 0,
+                secondNestedParagraphSpacingBeforeTwips: 1800,
+                secondNestedParagraphPositionYTwips: 0);
+            int topWithExactHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(
+                1200,
+                TableRowHeightRule.Exact,
+                firstNestedParagraphSpacingAfterTwips: 0,
+                secondNestedParagraphSpacingBeforeTwips: 1800,
+                secondNestedParagraphPositionYTwips: 0);
 
             Assert.True(topWithExactHeight < topWithAutoHeight);
         }
@@ -2693,7 +2757,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
         }
 
-        private static int GetHeaderSecondParagraphFloatingImageTopWithRowRule(int rowHeightTwips, TableRowHeightRule heightRule, string? imageVerticalAlignment, int firstParagraphSpacingAfterTwips = 0)
+        private static int GetHeaderSecondParagraphFloatingImageTopWithRowRule(int rowHeightTwips, TableRowHeightRule heightRule, string? imageVerticalAlignment, int firstParagraphSpacingAfterTwips = 0, int secondParagraphSpacingBeforeTwips = 0)
         {
             var story = new HeaderFooterStoryModel();
 
@@ -2718,6 +2782,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             });
 
             var secondParagraph = new ParagraphModel();
+            secondParagraph.Properties.SpacingBeforeTwips = secondParagraphSpacingBeforeTwips;
             secondParagraph.Runs.Add(new RunModel
             {
                 Image = new ImageModel
@@ -2774,7 +2839,12 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
         }
 
-        private static int GetHeaderNestedTableFloatingImageTopWithOuterRowRule(int outerRowHeightTwips, TableRowHeightRule outerHeightRule, int firstNestedParagraphSpacingAfterTwips)
+        private static int GetHeaderNestedTableFloatingImageTopWithOuterRowRule(
+            int outerRowHeightTwips,
+            TableRowHeightRule outerHeightRule,
+            int firstNestedParagraphSpacingAfterTwips,
+            int secondNestedParagraphSpacingBeforeTwips = 0,
+            int secondNestedParagraphPositionYTwips = 0)
         {
             var story = new HeaderFooterStoryModel();
 
@@ -2800,6 +2870,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             });
 
             var nestedSecondParagraph = new ParagraphModel();
+            nestedSecondParagraph.Properties.SpacingBeforeTwips = secondNestedParagraphSpacingBeforeTwips;
             nestedSecondParagraph.Runs.Add(new RunModel
             {
                 Image = new ImageModel
@@ -2811,7 +2882,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                     LayoutType = ImageLayoutType.Floating,
                     WrapType = ImageWrapType.Square,
                     VerticalRelativeTo = "paragraph",
-                    PositionYTwips = 0
+                    PositionYTwips = secondNestedParagraphPositionYTwips
                 }
             });
 

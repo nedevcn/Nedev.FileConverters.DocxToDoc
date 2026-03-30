@@ -301,6 +301,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                 if (maxVisibleCursorTwips.HasValue)
                 {
+                    paragraphTopTwips = Math.Min(paragraphTopTwips, maxVisibleCursorTwips.Value);
                     int maxAllowedHeight = Math.Max(0, maxVisibleCursorTwips.Value - paragraphTopTwips);
                     paragraphContentHeightTwips = Math.Min(paragraphContentHeightTwips, maxAllowedHeight);
                 }
@@ -448,6 +449,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 currentCp += 1;
                 visibleCp += 1;
                 verticalCursorTwips += paragraphAdvanceTwips;
+                if (maxVisibleCursorTwips.HasValue)
+                {
+                    verticalCursorTwips = Math.Min(verticalCursorTwips, maxVisibleCursorTwips.Value);
+                }
 
                 void AppendFieldCharacter(char marker, FieldModel? fieldModel = null, int nestingDepth = 0)
                 {
