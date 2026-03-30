@@ -741,6 +741,43 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithRunStyleColorAuto_OverridesInheritedColorToNull()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:r><w:rPr><w:rStyle w:val=\"RunChild\"/></w:rPr><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"character\" w:styleId=\"RunBase\"><w:name w:val=\"RunBase\"/><w:rPr><w:color w:val=\"FF0000\"/></w:rPr></w:style>" +
+                                 "<w:style w:type=\"character\" w:styleId=\"RunChild\"><w:name w:val=\"RunChild\"/><w:basedOn w:val=\"RunBase\"/><w:rPr><w:color w:val=\"auto\"/></w:rPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Null(run.Properties.Color);
+            Assert.True(run.Properties.ColorSpecified);
+        }
+
+        [Fact]
         public void ReadDocument_WithDrawingTextBoxContent_PreservesVisibleText()
         {
             using var ms = new MemoryStream();

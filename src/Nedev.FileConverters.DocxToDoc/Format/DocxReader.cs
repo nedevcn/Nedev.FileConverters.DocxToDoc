@@ -3168,6 +3168,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             target.Underline = source.Underline;
             target.UnderlineSpecified = source.UnderlineSpecified;
             target.Color = source.Color;
+            target.ColorSpecified = source.ColorSpecified;
         }
 
         private static bool TryApplyRunFormattingElement(XmlReader reader, Nedev.FileConverters.DocxToDoc.Model.RunModel run)
@@ -3236,7 +3237,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     return true;
                 case "color":
                     string? colorValue = reader.GetAttribute("w:val");
-                    if (!string.IsNullOrEmpty(colorValue) && colorValue != "auto")
+                    properties.ColorSpecified = true;
+                    if (string.Equals(colorValue, "auto", StringComparison.OrdinalIgnoreCase))
+                    {
+                        properties.Color = null;
+                    }
+                    else if (!string.IsNullOrEmpty(colorValue))
                     {
                         properties.Color = colorValue;
                     }
@@ -3384,7 +3390,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 target.Underline = source.Underline;
                 target.UnderlineSpecified = true;
             }
-            if (!string.IsNullOrWhiteSpace(source.Color)) target.Color = source.Color;
+            if (source.ColorSpecified)
+            {
+                target.Color = source.Color;
+                target.ColorSpecified = true;
+            }
         }
 
         private static void MergeCharacterPropertiesFromStyle(
@@ -3416,7 +3426,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 destination.Underline = styleProps.Underline;
                 destination.UnderlineSpecified = true;
             }
-            if (string.IsNullOrWhiteSpace(destination.Color) && !string.IsNullOrWhiteSpace(styleProps.Color)) destination.Color = styleProps.Color;
+            if (!destination.ColorSpecified && styleProps.ColorSpecified)
+            {
+                destination.Color = styleProps.Color;
+                destination.ColorSpecified = true;
+            }
         }
 
         private static string ReadRunTextFragment(XmlReader reader)
