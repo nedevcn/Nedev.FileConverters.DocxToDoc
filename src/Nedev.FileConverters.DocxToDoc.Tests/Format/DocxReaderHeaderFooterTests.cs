@@ -1595,6 +1595,57 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithHeaderTableAutoCellWidth_FallsBackToGridWidth()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var documentStream = documentEntry.Open())
+                using (var writer = new StreamWriter(documentStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
+                                 "<w:body><w:p><w:r><w:t>A</w:t></w:r></w:p><w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdHeader\"/></w:sectPr></w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdHeader\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header1.xml\" />" +
+                                 "</Relationships>");
+                }
+
+                var headerEntry = archive.CreateEntry("word/header1.xml");
+                using (var headerStream = headerEntry.Open())
+                using (var writer = new StreamWriter(headerStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:tbl><w:tblGrid><w:gridCol w:w=\"3600\"/></w:tblGrid><w:tr><w:tc>" +
+                                 "<w:tcPr><w:tcW w:type=\"auto\" w:w=\"0\"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p>" +
+                                 "</w:tc></w:tr></w:tbl>" +
+                                 "</w:hdr>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var section = Assert.Single(model.Sections);
+            var story = section.DefaultHeaderStory;
+            Assert.NotNull(story);
+            var table = Assert.IsType<TableModel>(Assert.Single(story!.Content));
+            var cell = Assert.Single(Assert.Single(table.Rows).Cells);
+            Assert.Equal(3600, cell.Width);
+        }
+
+        [Fact]
         public void ReadDocument_WithHeaderAltChunk_PreservesVisibleParagraphsInOrder()
         {
             byte[] packageBytes = CreateDefaultHeaderAltChunkPackage("afchunk-header.txt", "Chunk line 1\r\nChunk line 2");

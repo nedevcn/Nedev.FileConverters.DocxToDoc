@@ -296,6 +296,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentCell.GridSpan = gridSpan;
                         }
                     }
+                    else if (localName == "vMerge" && currentCell != null)
+                    {
+                        string? mergeValue = xmlReader.GetAttribute("w:val");
+                        currentCell.VerticalMerge = mergeValue switch
+                        {
+                            "restart" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart,
+                            "continue" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue
+                        };
+                    }
                     else if (localName == "vAlign" && currentCell != null)
                     {
                         string? value = xmlReader.GetAttribute("w:val");
@@ -985,6 +995,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.TableModel? currentTable = null;
             Nedev.FileConverters.DocxToDoc.Model.TableRowModel? currentRow = null;
             Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentCell = null;
+            int currentRowGridColumnIndex = 0;
             bool insideTableCellMargins = false;
             bool insideCellMargins = false;
             bool insideTableBorders = false;
@@ -1004,6 +1015,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentRow = new Nedev.FileConverters.DocxToDoc.Model.TableRowModel();
                         currentTable.Rows.Add(currentRow);
+                        currentRowGridColumnIndex = 0;
                     }
                     else if (localName == "tc" && currentRow != null)
                     {
@@ -1083,6 +1095,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             currentCell.GridSpan = gridSpan;
                         }
+                    }
+                    else if (localName == "vMerge" && currentCell != null)
+                    {
+                        string? mergeValue = reader.GetAttribute("w:val");
+                        currentCell.VerticalMerge = mergeValue switch
+                        {
+                            "restart" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart,
+                            "continue" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue
+                        };
                     }
                     else if (localName == "vAlign" && currentCell != null)
                     {
@@ -1457,6 +1479,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     }
                     else if (reader.LocalName == "tc")
                     {
+                        if (currentCell != null)
+                        {
+                            if (currentCell.Width <= 0 && currentTable != null)
+                            {
+                                currentCell.Width = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                            }
+
+                            currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
+                        }
+
                         currentCell = null;
                     }
                     else if (reader.LocalName == "tr")

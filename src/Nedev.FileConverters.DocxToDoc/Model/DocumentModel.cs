@@ -223,6 +223,7 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public int Width { get; set; }
         public TableWidthUnit WidthUnit { get; set; } = TableWidthUnit.Dxa;
         public int GridSpan { get; set; } = 1;
+        public TableCellVerticalMerge VerticalMerge { get; set; } = TableCellVerticalMerge.None;
         public TableCellVerticalAlignment VerticalAlignment { get; set; } = TableCellVerticalAlignment.Top;
         public bool HasLeftPaddingOverride { get; set; }
         public bool HasRightPaddingOverride { get; set; }
@@ -251,6 +252,13 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         Top = 0,
         Center = 1,
         Bottom = 2
+    }
+
+    public enum TableCellVerticalMerge
+    {
+        None = 0,
+        Restart = 1,
+        Continue = 2
     }
 
     public class ParagraphModel

@@ -1673,6 +1673,41 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithCellNilMargins_PreservesExplicitZeroPaddingOverrides()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tblPr><w:tblCellMar><w:left w:w=\"120\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/><w:top w:w=\"40\" w:type=\"dxa\"/><w:bottom w:w=\"70\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>" +
+                             "<w:tr>" +
+                             "<w:tc><w:tcPr><w:tcMar><w:left w:type=\"nil\"/><w:right w:type=\"nil\"/><w:top w:type=\"nil\"/><w:bottom w:type=\"nil\"/></w:tcMar></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var cell = Assert.Single(table.Rows[0].Cells);
+
+            Assert.True(cell.HasLeftPaddingOverride);
+            Assert.True(cell.HasRightPaddingOverride);
+            Assert.True(cell.HasTopPaddingOverride);
+            Assert.True(cell.HasBottomPaddingOverride);
+            Assert.Equal(0, cell.PaddingLeftTwips);
+            Assert.Equal(0, cell.PaddingRightTwips);
+            Assert.Equal(0, cell.PaddingTopTwips);
+            Assert.Equal(0, cell.PaddingBottomTwips);
+        }
+
+        [Fact]
         public void ReadDocument_WithPreferredTableWidth_ParsesWidthValueAndUnit()
         {
             using var ms = new MemoryStream();
@@ -1695,6 +1730,35 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
             Assert.Equal(2500, table.PreferredWidthValue);
             Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct, table.PreferredWidthUnit);
+        }
+
+        [Fact]
+        public void ReadDocument_WithVerticalMerge_ParsesRestartAndContinue()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl>" +
+                             "<w:tr><w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr>" +
+                             "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc></w:tr>" +
+                             "</w:tbl>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            Assert.Equal(2, table.Rows.Count);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart, table.Rows[0].Cells[0].VerticalMerge);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue, table.Rows[1].Cells[0].VerticalMerge);
         }
 
         [Fact]
