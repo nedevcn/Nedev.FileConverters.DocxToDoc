@@ -2608,8 +2608,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 "nil" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Nil,
                 "none" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.None,
                 "single" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Single,
+                "thick" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Single,
                 "dotted" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dotted,
                 "dashed" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dashed,
+                "dotdash" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dashed,
+                "dotdotdash" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dashed,
                 "double" => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Double,
                 _ => Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Other
             };

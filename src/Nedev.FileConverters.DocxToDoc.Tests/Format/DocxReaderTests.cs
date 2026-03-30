@@ -1731,6 +1731,64 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithCellBorderThick_MapsToSingleBorderStyle()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tr>" +
+                             "<w:tc><w:tcPr><w:tcBorders><w:left w:val=\"thick\" w:sz=\"20\"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var cell = Assert.Single(table.Rows[0].Cells);
+
+            Assert.True(cell.HasLeftBorderOverride);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Single, cell.BorderLeftStyle);
+            Assert.Equal(50, cell.BorderLeftTwips);
+        }
+
+        [Fact]
+        public void ReadDocument_WithCellBorderDotDash_MapsToDashedBorderStyle()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tr>" +
+                             "<w:tc><w:tcPr><w:tcBorders><w:left w:val=\"dotDash\" w:sz=\"16\"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var cell = Assert.Single(table.Rows[0].Cells);
+
+            Assert.True(cell.HasLeftBorderOverride);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.BorderStyle.Dashed, cell.BorderLeftStyle);
+            Assert.Equal(40, cell.BorderLeftTwips);
+        }
+
+        [Fact]
         public void ReadDocument_WithInsideTableBorders_ParsesInsideBorderThickness()
         {
             using var ms = new MemoryStream();
