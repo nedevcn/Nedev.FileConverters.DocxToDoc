@@ -462,6 +462,43 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_FloatingImageDistance_ExpandsBodyAnchorBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            (int left, int top, int right, int bottom) withoutDistance = GetBodyFloatingImageBoundsWithDistance(pngBytes, 0, 0, 0, 0);
+            (int left, int top, int right, int bottom) withDistance = GetBodyFloatingImageBoundsWithDistance(pngBytes, 120, 240, 360, 480);
+
+            Assert.Equal(withoutDistance.left - 120, withDistance.left);
+            Assert.Equal(withoutDistance.top - 240, withDistance.top);
+            Assert.Equal(withoutDistance.right + 360, withDistance.right);
+            Assert.Equal(withoutDistance.bottom + 480, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_FloatingImageVerticalRelativeToLine_UsesSmallerAnchorThanParagraph()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int paragraphRelativeTop = GetBodyFloatingImageTopWithVerticalRelativeTo(pngBytes, "paragraph");
+            int lineRelativeTop = GetBodyFloatingImageTopWithVerticalRelativeTo(pngBytes, "line");
+
+            Assert.True(lineRelativeTop < paragraphRelativeTop);
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableGridWidthFallback_UsesGridColumnsForFloatingImageLayout()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1109,6 +1146,52 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsNestedLaterParagraphTop_WhenParagraphRelativePositionYExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetNestedOverflowClippedImageTop(
+                0,
+                TableRowHeightRule.Auto,
+                pngBytes,
+                firstNestedParagraphSpacingAfterTwips: 0,
+                secondNestedParagraphSpacingBeforeTwips: 0,
+                secondNestedParagraphPositionYTwips: 1800);
+            int topWithExactHeight = GetNestedOverflowClippedImageTop(
+                1200,
+                TableRowHeightRule.Exact,
+                pngBytes,
+                firstNestedParagraphSpacingAfterTwips: 0,
+                secondNestedParagraphSpacingBeforeTwips: 0,
+                secondNestedParagraphPositionYTwips: 1800);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsNestedHyperlinkFloatingImageTop_WhenParagraphRelativePositionYExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetNestedOverflowClippedHyperlinkImageTop(0, TableRowHeightRule.Auto, pngBytes, hyperlinkImagePositionYTwips: 1800);
+            int topWithExactHeight = GetNestedOverflowClippedHyperlinkImageTop(1200, TableRowHeightRule.Exact, pngBytes, hyperlinkImagePositionYTwips: 1800);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableRowHeightExact_ClipsOverflowingCellContentForLaterParagraphs_WithNegativeSpacingBefore()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1175,6 +1258,206 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             Assert.True(topWithAutoHeight > 1200);
             Assert.True(topWithExactHeight <= 1200);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsLaterParagraphTop_WhenParagraphRelativePositionYExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedImageTop(
+                0,
+                TableRowHeightRule.Auto,
+                pngBytes,
+                secondParagraphSpacingBeforeTwips: 0,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphPositionYTwips: 1800);
+            int topWithExactHeight = GetOverflowClippedImageTop(
+                1200,
+                TableRowHeightRule.Exact,
+                pngBytes,
+                secondParagraphSpacingBeforeTwips: 0,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphPositionYTwips: 1800);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsHyperlinkFloatingImageTop_WhenParagraphRelativePositionYExceedsVisibleHeight()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedHyperlinkImageTop(0, TableRowHeightRule.Auto, pngBytes, 1800);
+            int topWithExactHeight = GetOverflowClippedHyperlinkImageTop(1200, TableRowHeightRule.Exact, pngBytes, 1800);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsLaterParagraphTop_WhenParagraphRelativePositionYIsNegativeBeyondVisibleStart()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedImageTop(
+                0,
+                TableRowHeightRule.Auto,
+                pngBytes,
+                secondParagraphSpacingBeforeTwips: 0,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphPositionYTwips: -1800);
+            int topWithExactHeight = GetOverflowClippedImageTop(
+                1200,
+                TableRowHeightRule.Exact,
+                pngBytes,
+                secondParagraphSpacingBeforeTwips: 0,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphPositionYTwips: -1800);
+
+            Assert.True(topWithExactHeight > topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsHyperlinkFloatingImageTop_WhenParagraphRelativePositionYIsNegativeBeyondVisibleStart()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithAutoHeight = GetOverflowClippedHyperlinkImageTop(0, TableRowHeightRule.Auto, pngBytes, -1800);
+            int topWithExactHeight = GetOverflowClippedHyperlinkImageTop(1200, TableRowHeightRule.Exact, pngBytes, -1800);
+
+            Assert.True(topWithExactHeight > topWithAutoHeight);
+        }
+
+        private static (int left, int top, int right, int bottom) GetBodyFloatingImageBoundsWithDistance(
+            byte[] pngBytes,
+            int distanceLeftTwips,
+            int distanceTopTwips,
+            int distanceRightTwips,
+            int distanceBottomTwips)
+        {
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            HorizontalRelativeTo = "margin",
+                            VerticalRelativeTo = "paragraph",
+                            PositionXTwips = 0,
+                            PositionYTwips = 0,
+                            DistanceLeftTwips = distanceLeftTwips,
+                            DistanceTopTwips = distanceTopTwips,
+                            DistanceRightTwips = distanceRightTwips,
+                            DistanceBottomTwips = distanceBottomTwips
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            int left = BitConverter.ToInt32(tableData, recordOffset + 4);
+            int top = BitConverter.ToInt32(tableData, recordOffset + 8);
+            int right = BitConverter.ToInt32(tableData, recordOffset + 12);
+            int bottom = BitConverter.ToInt32(tableData, recordOffset + 16);
+            return (left, top, right, bottom);
+        }
+
+        private static int GetBodyFloatingImageTopWithVerticalRelativeTo(byte[] pngBytes, string verticalRelativeTo)
+        {
+            var model = new DocumentModel();
+            var paragraph = new ParagraphModel
+            {
+                Properties =
+                {
+                    LineSpacing = 1200,
+                    LineSpacingRule = "exact"
+                },
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This is a long paragraph that should wrap into multiple lines to make line-relative and paragraph-relative anchors diverge.",
+                        Properties = { FontSize = 24 }
+                    },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 16,
+                            Height = 8,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalAlignment = "bottom",
+                            VerticalRelativeTo = verticalRelativeTo,
+                            PositionYTwips = 0
+                        }
+                    }
+                }
+            };
+            model.Content.Add(paragraph);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
         private static int GetSecondCellImageTop(bool useExplicitWidth, bool addPadding, byte[] pngBytes)
@@ -3079,6 +3362,73 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
+        private static int GetOverflowClippedHyperlinkImageTop(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes, int hyperlinkImagePositionYTwips)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+            var cell = new TableCellModel { Width = 2000 };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This first paragraph is intentionally long enough to create overflow before the hyperlink image paragraph is laid out.",
+                        Properties = { FontSize = 24 }
+                    }
+                }
+            });
+
+            var hyperlink = new HyperlinkModel
+            {
+                TargetUrl = "https://example.com/image",
+                DisplayText = "ImageLink"
+            };
+
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Hyperlink = hyperlink,
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = hyperlinkImagePositionYTwips
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
         private static int GetNestedOverflowClippedImageTop(
             int rowHeightTwips,
             TableRowHeightRule heightRule,
@@ -3133,6 +3483,82 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                             LayoutType = ImageLayoutType.Floating,
                             VerticalRelativeTo = "paragraph",
                             PositionYTwips = secondNestedParagraphPositionYTwips
+                        }
+                    }
+                }
+            });
+            nestedCell.Paragraphs.AddRange(nestedCell.Content.ConvertAll(static c => (ParagraphModel)c));
+
+            nestedRow.Cells.Add(nestedCell);
+            nestedTable.Rows.Add(nestedRow);
+
+            outerCell.Content.Add(nestedTable);
+            outerRow.Cells.Add(outerCell);
+            outerTable.Rows.Add(outerRow);
+            model.Content.Add(outerTable);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetNestedOverflowClippedHyperlinkImageTop(int rowHeightTwips, TableRowHeightRule heightRule, byte[] pngBytes, int hyperlinkImagePositionYTwips)
+        {
+            var model = new DocumentModel();
+            var outerTable = new TableModel();
+            var outerRow = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+            var outerCell = new TableCellModel { Width = 2000 };
+
+            var nestedTable = new TableModel();
+            var nestedRow = new TableRowModel();
+            var nestedCell = new TableCellModel { Width = 1800 };
+
+            nestedCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This nested paragraph is intentionally long enough to create overflow before the hyperlink image paragraph is laid out.",
+                        Properties = { FontSize = 24 }
+                    }
+                }
+            });
+
+            var hyperlink = new HyperlinkModel
+            {
+                TargetUrl = "https://example.com/nested-image",
+                DisplayText = "NestedImageLink"
+            };
+
+            nestedCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Hyperlink = hyperlink,
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = hyperlinkImagePositionYTwips
                         }
                     }
                 }

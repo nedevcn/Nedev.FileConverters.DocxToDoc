@@ -508,8 +508,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                     if (SupportsOfficeArtBlip(imageContentType))
                     {
-                        (int leftTwips, int topTwips, _, _) = ResolveImageBoundsTwips(runModel.Image, imageContentType, layoutSection, paragraphTopTwips, paragraphContentHeightTwips);
-                        officeArtBlips.Add((currentCp, runModel.Image.Data, imageContentType, imageWidthTwips, imageHeightTwips, leftTwips, topTwips, runModel.Image.WrapType, runModel.Image.BehindText, runModel.Image.AllowOverlap, runModel.Image.HorizontalRelativeTo, runModel.Image.VerticalRelativeTo));
+                        (int leftTwips, int topTwips, int rightTwips, int bottomTwips) = ResolveImageBoundsTwips(runModel.Image, imageContentType, layoutSection, paragraphTopTwips, paragraphContentHeightTwips, clampParagraphOffsetToExtent: isConstrainedLayout);
+                        int pictureWidthTwips = Math.Max(1, rightTwips - leftTwips);
+                        int pictureHeightTwips = Math.Max(1, bottomTwips - topTwips);
+                        officeArtBlips.Add((currentCp, runModel.Image.Data, imageContentType, pictureWidthTwips, pictureHeightTwips, leftTwips, topTwips, runModel.Image.WrapType, runModel.Image.BehindText, runModel.Image.AllowOverlap, runModel.Image.HorizontalRelativeTo, runModel.Image.VerticalRelativeTo));
                     }
 
                     chpxWriter.AddRun(currentCp, currentCp + 1, BuildImageSprms(pictureOffset));
@@ -784,7 +786,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, storyAvailableWidthTwips);
                         int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
                         int paragraphTopTwips = storyVerticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
-                        AppendStructuredHeaderFooterParagraph(paragraph, storySection, paragraphTopTwips, paragraphContentHeightTwips, ref storyLength, inTable: false);
+                        AppendStructuredHeaderFooterParagraph(paragraph, storySection, paragraphTopTwips, paragraphContentHeightTwips, ref storyLength, inTable: false, constrainToParagraphExtent: false);
                         storyVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
                     }
                     else if (block is TableModel table)
@@ -875,7 +877,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                         effectiveParagraphContentHeightTwips = Math.Min(paragraphContentHeightTwips, visibleContentLimitTwips);
                                     }
 
-                                    AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, effectiveParagraphContentHeightTwips, ref localStoryLength, inTable: true);
+                                    AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, effectiveParagraphContentHeightTwips, ref localStoryLength, inTable: true, constrainToParagraphExtent: row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue);
                                     cellVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, effectiveParagraphContentHeightTwips, constrainSpacing: row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue);
                                     if (row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue)
                                     {
@@ -937,7 +939,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     }
                 }
 
-                void AppendStructuredHeaderFooterParagraph(ParagraphModel paragraph, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength, bool inTable)
+                void AppendStructuredHeaderFooterParagraph(ParagraphModel paragraph, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength, bool inTable, bool constrainToParagraphExtent)
                 {
                     int paragraphStart = currentCp;
                     var autoCompletedFields = new HashSet<FieldModel>();
@@ -962,7 +964,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                             for (int hyperlinkRunIndex = hyperlinkStart; hyperlinkRunIndex <= runIndex; hyperlinkRunIndex++)
                             {
-                                AppendHeaderVisibleRunContent(paragraph.Runs[hyperlinkRunIndex], layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength);
+                                AppendHeaderVisibleRunContent(paragraph.Runs[hyperlinkRunIndex], layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, constrainToParagraphExtent);
                             }
 
                             AppendHeaderFieldCharacter('\x0015', ref localStoryLength);
@@ -1042,7 +1044,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             continue;
                         }
 
-                        AppendHeaderVisibleRunContent(run, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength);
+                        AppendHeaderVisibleRunContent(run, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, constrainToParagraphExtent);
                     }
 
                     for (int index = openFields.Count - 1; index >= 0; index--)
@@ -1118,9 +1120,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     localStoryLength += 1;
                 }
 
-                void AppendHeaderVisibleRunContent(RunModel runModel, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength)
+                void AppendHeaderVisibleRunContent(RunModel runModel, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength, bool constrainToParagraphExtent)
                 {
-                    AppendHeaderImageRunContent(runModel, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength);
+                    AppendHeaderImageRunContent(runModel, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, constrainToParagraphExtent);
 
                     if (runModel.Text.Length == 0)
                     {
@@ -1131,7 +1133,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     AppendHeaderVisibleText(runModel.Text, ref localStoryLength, runSprms.Length > 0 ? runSprms : null);
                 }
 
-                void AppendHeaderImageRunContent(RunModel runModel, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength)
+                void AppendHeaderImageRunContent(RunModel runModel, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength, bool constrainToParagraphExtent)
                 {
                     if (runModel.Image == null ||
                         runModel.Image.Data == null)
@@ -1153,9 +1155,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         layoutSectionForStory != null &&
                         SupportsOfficeArtBlip(imageContentType))
                     {
-                        (int imageWidthTwips, int imageHeightTwips) = ResolveImageDimensionsTwips(runModel.Image, imageContentType);
-                        (int leftTwips, int topTwips, _, _) = ResolveImageBoundsTwips(runModel.Image, imageContentType, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips);
-                        headerOfficeArtBlips.Add((localPictureCp, runModel.Image.Data, imageContentType, imageWidthTwips, imageHeightTwips, leftTwips, topTwips, runModel.Image.WrapType, runModel.Image.BehindText, runModel.Image.AllowOverlap, runModel.Image.HorizontalRelativeTo, runModel.Image.VerticalRelativeTo));
+                        (int leftTwips, int topTwips, int rightTwips, int bottomTwips) = ResolveImageBoundsTwips(runModel.Image, imageContentType, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, clampParagraphOffsetToExtent: constrainToParagraphExtent);
+                        int pictureWidthTwips = Math.Max(1, rightTwips - leftTwips);
+                        int pictureHeightTwips = Math.Max(1, bottomTwips - topTwips);
+                        headerOfficeArtBlips.Add((localPictureCp, runModel.Image.Data, imageContentType, pictureWidthTwips, pictureHeightTwips, leftTwips, topTwips, runModel.Image.WrapType, runModel.Image.BehindText, runModel.Image.AllowOverlap, runModel.Image.HorizontalRelativeTo, runModel.Image.VerticalRelativeTo));
                     }
 
                     chpxWriter.AddRun(currentCp, currentCp + 1, BuildImageSprms(pictureOffset));
@@ -1748,7 +1751,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (!isHorizontal && normalized == "line")
             {
-                return "paragraph";
+                return "line";
             }
 
             if (normalized == "margin"
@@ -1764,7 +1767,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (isHorizontal && (normalized == "column" || normalized == "leftmargin" || normalized == "rightmargin" || normalized == "left" || normalized == "right"))
             {
-                return "margin";
+                return normalized == "column" ? "column" : "margin";
             }
 
             if (!isHorizontal && (normalized == "topmargin" || normalized == "bottommargin" || normalized == "top" || normalized == "bottom"))
@@ -3002,7 +3005,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return (widthTwips, heightTwips);
         }
 
-        private static (int leftTwips, int topTwips, int rightTwips, int bottomTwips) ResolveImageBoundsTwips(ImageModel image, string? contentType, SectionModel section, int paragraphTopTwips, int paragraphHeightTwips)
+        private static (int leftTwips, int topTwips, int rightTwips, int bottomTwips) ResolveImageBoundsTwips(ImageModel image, string? contentType, SectionModel section, int paragraphTopTwips, int paragraphHeightTwips, bool clampParagraphOffsetToExtent = false)
         {
             (int widthTwips, int heightTwips) = ResolveImageDimensionsTwips(image, contentType);
             int leftTwips = 0;
@@ -3030,7 +3033,19 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     section.MarginBottom,
                     isHorizontal: false,
                     paragraphStartTwips: paragraphTopTwips,
-                    paragraphExtentTwips: paragraphHeightTwips);
+                    paragraphExtentTwips: paragraphHeightTwips,
+                    clampParagraphOffsetToExtent: clampParagraphOffsetToExtent);
+
+                int distanceLeftTwips = Math.Max(0, image.DistanceLeftTwips);
+                int distanceTopTwips = Math.Max(0, image.DistanceTopTwips);
+                int distanceRightTwips = Math.Max(0, image.DistanceRightTwips);
+                int distanceBottomTwips = Math.Max(0, image.DistanceBottomTwips);
+
+                leftTwips -= distanceLeftTwips;
+                topTwips -= distanceTopTwips;
+
+                widthTwips += distanceLeftTwips + distanceRightTwips;
+                heightTwips += distanceTopTwips + distanceBottomTwips;
             }
 
             return (leftTwips, topTwips, leftTwips + widthTwips, topTwips + heightTwips);
@@ -4081,6 +4096,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return 2;
             }
 
+            if (normalized == "line")
+            {
+                return 2;
+            }
+
+            if (normalized == "column")
+            {
+                return 1;
+            }
+
             return 0;
         }
 
@@ -4094,19 +4119,30 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int trailingMarginTwips,
             bool isHorizontal,
             int paragraphStartTwips = 0,
-            int paragraphExtentTwips = 0)
+            int paragraphExtentTwips = 0,
+            bool clampParagraphOffsetToExtent = false)
         {
             string normalizedRelativeTo = NormalizeRelativeTo(relativeTo, isHorizontal);
-            if (normalizedRelativeTo == "paragraph")
+            if (normalizedRelativeTo == "paragraph" || normalizedRelativeTo == "line")
             {
+                int anchorExtentTwips = normalizedRelativeTo == "line"
+                    ? ResolveLineAnchorExtentTwips(paragraphExtentTwips)
+                    : paragraphExtentTwips;
                 if (!isHorizontal && !string.IsNullOrWhiteSpace(alignment))
                 {
-                    return ResolveAlignmentWithinAnchor(paragraphStartTwips, paragraphExtentTwips, sizeTwips, alignment, isHorizontal);
+                    return ResolveAlignmentWithinAnchor(paragraphStartTwips, anchorExtentTwips, sizeTwips, alignment, isHorizontal);
                 }
 
                 if (!isHorizontal)
                 {
-                    return paragraphStartTwips + offsetTwips;
+                    int resolvedTopTwips = paragraphStartTwips + offsetTwips;
+                    if (clampParagraphOffsetToExtent)
+                    {
+                        int paragraphBottomTwips = paragraphStartTwips + Math.Max(0, anchorExtentTwips);
+                        resolvedTopTwips = Math.Max(paragraphStartTwips, Math.Min(resolvedTopTwips, paragraphBottomTwips));
+                    }
+
+                    return resolvedTopTwips;
                 }
 
                 return offsetTwips;
@@ -4114,15 +4150,30 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (!string.IsNullOrWhiteSpace(alignment))
             {
-                return ResolveAlignmentPositionTwips(alignment, normalizedRelativeTo, sizeTwips, pageExtentTwips, leadingMarginTwips, trailingMarginTwips, isHorizontal);
+                return ResolveAlignmentPositionTwips(alignment, normalizedRelativeTo == "column" ? "margin" : normalizedRelativeTo, sizeTwips, pageExtentTwips, leadingMarginTwips, trailingMarginTwips, isHorizontal);
             }
 
-            if (normalizedRelativeTo == "margin")
+            if (normalizedRelativeTo == "margin" || normalizedRelativeTo == "column")
             {
                 return leadingMarginTwips + offsetTwips;
             }
 
             return offsetTwips;
+        }
+
+        private static int ResolveLineAnchorExtentTwips(int paragraphExtentTwips)
+        {
+            if (paragraphExtentTwips <= 0)
+            {
+                return 0;
+            }
+
+            if (paragraphExtentTwips <= 276)
+            {
+                return paragraphExtentTwips;
+            }
+
+            return Math.Min(paragraphExtentTwips, Math.Max(276, paragraphExtentTwips / 4));
         }
 
         private static int ResolveAlignmentWithinAnchor(int anchorStart, int anchorExtent, int sizeTwips, string alignment, bool isHorizontal)
