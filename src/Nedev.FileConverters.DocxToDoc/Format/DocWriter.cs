@@ -1651,13 +1651,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             if (normalized == "margin"
-                || normalized == "column"
-                || normalized == "leftmargin"
-                || normalized == "rightmargin"
                 || normalized == "insidemargin"
-                || normalized == "outsidemargin"
-                || normalized == "topmargin"
-                || normalized == "bottommargin")
+                || normalized == "outsidemargin")
+            {
+                return "margin";
+            }
+
+            if (isHorizontal && (normalized == "column" || normalized == "leftmargin" || normalized == "rightmargin"))
+            {
+                return "margin";
+            }
+
+            if (!isHorizontal && (normalized == "topmargin" || normalized == "bottommargin"))
             {
                 return "margin";
             }
