@@ -114,6 +114,99 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
         }
 
         [Fact]
+        public void Convert_InvalidDocxStream_ThrowsConversionExceptionWithParsingStage()
+        {
+            var converter = new DocxToDocConverter();
+            using var invalidDocx = new MemoryStream(new byte[] { 1, 2, 3, 4, 5 });
+            using var output = new MemoryStream();
+
+            var ex = Assert.Throws<ConversionException>(() => converter.Convert(invalidDocx, output));
+            Assert.Equal(ConversionStage.Parsing, ex.Stage);
+        }
+
+        [Fact]
+        public void Convert_DocxMissingMainDocument_ThrowsConversionExceptionWithReadingStage()
+        {
+            var converter = new DocxToDocConverter();
+            using var input = CreateDocxWithoutMainDocument();
+            using var output = new MemoryStream();
+
+            var ex = Assert.Throws<ConversionException>(() => converter.Convert(input, output));
+            Assert.Equal(ConversionStage.Reading, ex.Stage);
+        }
+
+        [Fact]
+        public void Convert_InvalidOutputPath_ThrowsConversionExceptionWithWritingStage()
+        {
+            var converter = new DocxToDocConverter();
+            string tempDocx = Path.Combine(Path.GetTempPath(), $"valid_{Guid.NewGuid()}.docx");
+            CreateMinimalDocx(tempDocx);
+
+            string invalidOutputPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "out.doc");
+            try
+            {
+                var ex = Assert.Throws<ConversionException>(() => converter.Convert(tempDocx, invalidOutputPath));
+                Assert.Equal(ConversionStage.Writing, ex.Stage);
+            }
+            finally
+            {
+                File.Delete(tempDocx);
+            }
+        }
+
+        [Fact]
+        public async Task ConvertAsync_InvalidDocxStream_ThrowsConversionExceptionWithParsingStage()
+        {
+            var converter = new DocxToDocConverter();
+            using var invalidDocx = new MemoryStream(new byte[] { 9, 8, 7, 6 });
+            using var output = new MemoryStream();
+
+            var ex = await Assert.ThrowsAsync<ConversionException>(() => converter.ConvertAsync(invalidDocx, output));
+            Assert.Equal(ConversionStage.Parsing, ex.Stage);
+        }
+
+        [Fact]
+        public async Task ConvertAsync_WriteFailure_ThrowsConversionExceptionWithWritingStage()
+        {
+            var converter = new DocxToDocConverter();
+            string tempDocx = CreateTemporaryMinimalDocx();
+            try
+            {
+                using var input = File.OpenRead(tempDocx);
+                using var output = new ThrowOnWriteStream();
+
+                var ex = await Assert.ThrowsAsync<ConversionException>(() => converter.ConvertAsync(input, output));
+                Assert.Equal(ConversionStage.Writing, ex.Stage);
+            }
+            finally
+            {
+                File.Delete(tempDocx);
+            }
+        }
+
+        [Fact]
+        public void Convert_FinalizeFailure_ThrowsConversionExceptionWithFinalizingStage()
+        {
+            var converter = new DocxToDocConverter();
+            using var input = CreateDocxAsMemoryStream();
+            using var output = new ThrowOnFlushStream();
+
+            var ex = Assert.Throws<ConversionException>(() => converter.Convert(input, output));
+            Assert.Equal(ConversionStage.Finalizing, ex.Stage);
+        }
+
+        [Fact]
+        public async Task ConvertAsync_FinalizeFailure_ThrowsConversionExceptionWithFinalizingStage()
+        {
+            var converter = new DocxToDocConverter();
+            using var input = CreateDocxAsMemoryStream();
+            using var output = new ThrowOnFlushStream();
+
+            var ex = await Assert.ThrowsAsync<ConversionException>(() => converter.ConvertAsync(input, output));
+            Assert.Equal(ConversionStage.Finalizing, ex.Stage);
+        }
+
+        [Fact]
         public async Task ConvertAsync_NullDocxPath_ThrowsArgumentNullException()
         {
             // Arrange
@@ -207,6 +300,96 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
             }
         }
 
+        private string CreateTemporaryMinimalDocx()
+        {
+            string path = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.docx");
+            CreateMinimalDocx(path);
+            return path;
+        }
+
+        private MemoryStream CreateDocxAsMemoryStream()
+        {
+            var stream = new MemoryStream();
+            using (var archive = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var contentTypesEntry = archive.CreateEntry("[Content_Types].xml");
+                using (var contentTypesStream = contentTypesEntry.Open())
+                using (var writer = new StreamWriter(contentTypesStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
+                        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
+                        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>" +
+                        "</Types>");
+                }
+
+                var relsEntry = archive.CreateEntry("_rels/.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
+                        "</Relationships>");
+                }
+
+                var docRelsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var docRelsStream = docRelsEntry.Open())
+                using (var writer = new StreamWriter(docRelsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                        "</Relationships>");
+                }
+
+                var docEntry = archive.CreateEntry("word/document.xml");
+                using (var docStream = docEntry.Open())
+                using (var writer = new StreamWriter(docStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                        "<w:body><w:p><w:r><w:t>Finalize</w:t></w:r></w:p></w:body>" +
+                        "</w:document>");
+                }
+            }
+
+            stream.Position = 0;
+            return stream;
+        }
+
+        private MemoryStream CreateDocxWithoutMainDocument()
+        {
+            var stream = new MemoryStream();
+            using (var archive = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var contentTypesEntry = archive.CreateEntry("[Content_Types].xml");
+                using (var contentTypesStream = contentTypesEntry.Open())
+                using (var writer = new StreamWriter(contentTypesStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
+                        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
+                        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>" +
+                        "</Types>");
+                }
+
+                var relsEntry = archive.CreateEntry("_rels/.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
+                        "</Relationships>");
+                }
+            }
+
+            stream.Position = 0;
+            return stream;
+        }
+
         [Fact]
         public void ConversionException_ContainsCorrectStage()
         {
@@ -279,6 +462,52 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
             public override long Seek(long offset, SeekOrigin origin) => 0;
             public override void SetLength(long value) { }
             public override void Write(byte[] buffer, int offset, int count) { }
+        }
+
+        private class ThrowOnWriteStream : Stream
+        {
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => 0;
+            public override long Position { get; set; }
+
+            public override void Flush() { }
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new IOException("write failed");
+        }
+
+        private class ThrowOnFlushStream : Stream
+        {
+            private readonly MemoryStream _inner = new MemoryStream();
+
+            public override bool CanRead => _inner.CanRead;
+            public override bool CanSeek => _inner.CanSeek;
+            public override bool CanWrite => _inner.CanWrite;
+            public override long Length => _inner.Length;
+            public override long Position
+            {
+                get => _inner.Position;
+                set => _inner.Position = value;
+            }
+
+            public override void Flush() => throw new IOException("flush failed");
+            public override Task FlushAsync(CancellationToken cancellationToken) => Task.FromException(new IOException("flush failed"));
+            public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+            public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+            public override void SetLength(long value) => _inner.SetLength(value);
+            public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    _inner.Dispose();
+                }
+
+                base.Dispose(disposing);
+            }
         }
     }
 }

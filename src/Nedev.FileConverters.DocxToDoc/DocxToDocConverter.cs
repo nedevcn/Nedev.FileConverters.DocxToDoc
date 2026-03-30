@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 
 namespace Nedev.FileConverters.DocxToDoc
 {
@@ -67,9 +68,8 @@ namespace Nedev.FileConverters.DocxToDoc
             try
             {
                 ValidateInputFile(docxPath);
-
-                using var inputStream = new FileStream(docxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                using var outputStream = new FileStream(docPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                using var inputStream = OpenInputStream(docxPath, docPath);
+                using var outputStream = OpenOutputStream(docxPath, docPath);
                 
                 Convert(inputStream, outputStream);
                 
@@ -116,24 +116,97 @@ namespace Nedev.FileConverters.DocxToDoc
                 MemoryMonitor.LogMemoryUsage(_logger, "Before conversion");
 
                 // Create a DocxReader to parse the document contents
-                _logger.LogDebug("Initializing DOCX reader");
-                using var reader = new Format.DocxReader(docxStream);
+                Model.DocumentModel documentModel;
 
-                // Extract necessary layout/styles/content out of OpenXML and map to MS-DOC
-                _logger.LogDebug("Reading document content");
-                var documentModel = reader.ReadDocument();
-                    int imageCount = CountImages(documentModel);
+                try
+                {
+                    _logger.LogDebug("Initializing DOCX reader");
+                    using var reader = new Format.DocxReader(docxStream);
+                    _logger.LogDebug("Reading document content");
+                    documentModel = reader.ReadDocument();
+                }
+                catch (FileNotFoundException ex)
+                {
+                    _logger.LogError("Required file not found in DOCX archive", ex);
+                    throw new ConversionException(
+                        "The DOCX file is missing required components.",
+                        ConversionStage.Reading,
+                        ex);
+                }
+                catch (InvalidDataException ex)
+                {
+                    _logger.LogError("Invalid DOCX format", ex);
+                    throw new ConversionException(
+                        "The input file is not a valid DOCX file or is corrupted.",
+                        ConversionStage.Parsing,
+                        ex);
+                }
+                catch (XmlException ex)
+                {
+                    _logger.LogError("Invalid DOCX XML content", ex);
+                    throw new ConversionException(
+                        "The DOCX XML content is invalid.",
+                        ConversionStage.Parsing,
+                        ex);
+                }
+                catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException))
+                {
+                    _logger.LogError("Unexpected error while reading DOCX content", ex);
+                    throw new ConversionException(
+                        "An unexpected error occurred while parsing DOCX content.",
+                        ConversionStage.Parsing,
+                        ex);
+                }
+
+                int imageCount = CountImages(documentModel);
 
                 monitor.RecordParagraphs(documentModel.Paragraphs.Count);
                 monitor.RecordTables(documentModel.Content.Count(c => c is Model.TableModel));
-                    monitor.RecordImages(imageCount);
+                monitor.RecordImages(imageCount);
 
                 _logger.LogInfo($"Document parsed: {documentModel.Paragraphs.Count} paragraphs, {documentModel.Styles.Count} styles");
 
                 // Provide data blocks for the MS-DOC writer
                 _logger.LogDebug("Writing DOC format");
                 var writer = new Format.DocWriter();
-                writer.WriteDocBlocks(documentModel, docStream);
+                try
+                {
+                    writer.WriteDocBlocks(documentModel, docStream);
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogError("I/O error while writing DOC output", ex);
+                    throw new ConversionException(
+                        "Failed to write DOC output due to an I/O error.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    _logger.LogError("Access denied while writing DOC output", ex);
+                    throw new ConversionException(
+                        "Failed to write DOC output due to insufficient permissions.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+                catch (ObjectDisposedException ex)
+                {
+                    _logger.LogError("Output stream is unavailable while writing DOC output", ex);
+                    throw new ConversionException(
+                        "Failed to write DOC output because the output stream is unavailable.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+                catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException))
+                {
+                    _logger.LogError("Unexpected error while writing DOC output", ex);
+                    throw new ConversionException(
+                        "An unexpected error occurred while writing DOC output.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+
+                FinalizeOutput(docStream);
 
                 // Record bytes written
                 if (docStream.CanSeek)
@@ -148,22 +221,6 @@ namespace Nedev.FileConverters.DocxToDoc
                 monitor.LogSummary();
 
                 _logger.LogDebug("Stream conversion completed");
-            }
-            catch (FileNotFoundException ex)
-            {
-                _logger.LogError("Required file not found in DOCX archive", ex);
-                throw new ConversionException(
-                    "The DOCX file is missing required components.",
-                    ConversionStage.Reading,
-                    ex);
-            }
-            catch (InvalidDataException ex)
-            {
-                _logger.LogError("Invalid DOCX format", ex);
-                throw new ConversionException(
-                    "The input file is not a valid DOCX file or is corrupted.",
-                    ConversionStage.Parsing,
-                    ex);
             }
             catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException))
             {
@@ -199,8 +256,8 @@ namespace Nedev.FileConverters.DocxToDoc
             {
                 ValidateInputFile(docxPath);
 
-                using var inputStream = new FileStream(docxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                using var outputStream = new FileStream(docPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                using var inputStream = OpenInputStream(docxPath, docPath);
+                using var outputStream = OpenOutputStream(docxPath, docPath);
                 
                 await ConvertAsync(inputStream, outputStream, cancellationToken).ConfigureAwait(false);
                 
@@ -251,14 +308,49 @@ namespace Nedev.FileConverters.DocxToDoc
             try
             {
                 // Create a DocxReader to parse the document contents
-                _logger.LogDebug("Initializing DOCX reader");
-                using var reader = new Format.DocxReader(docxStream);
+                Model.DocumentModel documentModel;
                 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Extract necessary layout/styles/content out of OpenXML and map to MS-DOC
-                _logger.LogDebug("Reading document content");
-                var documentModel = await Task.Run(() => reader.ReadDocument(), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    _logger.LogDebug("Initializing DOCX reader");
+                    using var reader = new Format.DocxReader(docxStream);
+                    _logger.LogDebug("Reading document content");
+                    documentModel = await Task.Run(() => reader.ReadDocument(), cancellationToken).ConfigureAwait(false);
+                }
+                catch (FileNotFoundException ex)
+                {
+                    _logger.LogError("Required file not found in DOCX archive", ex);
+                    throw new ConversionException(
+                        "The DOCX file is missing required components.",
+                        ConversionStage.Reading,
+                        ex);
+                }
+                catch (InvalidDataException ex)
+                {
+                    _logger.LogError("Invalid DOCX format", ex);
+                    throw new ConversionException(
+                        "The input file is not a valid DOCX file or is corrupted.",
+                        ConversionStage.Parsing,
+                        ex);
+                }
+                catch (XmlException ex)
+                {
+                    _logger.LogError("Invalid DOCX XML content", ex);
+                    throw new ConversionException(
+                        "The DOCX XML content is invalid.",
+                        ConversionStage.Parsing,
+                        ex);
+                }
+                catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException || ex is OperationCanceledException))
+                {
+                    _logger.LogError("Unexpected error while reading DOCX content", ex);
+                    throw new ConversionException(
+                        "An unexpected error occurred while parsing DOCX content.",
+                        ConversionStage.Parsing,
+                        ex);
+                }
                 
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -267,7 +359,44 @@ namespace Nedev.FileConverters.DocxToDoc
                 // Provide data blocks for the MS-DOC writer
                 _logger.LogDebug("Writing DOC format");
                 var writer = new Format.DocWriter();
-                await Task.Run(() => writer.WriteDocBlocks(documentModel, docStream), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await Task.Run(() => writer.WriteDocBlocks(documentModel, docStream), cancellationToken).ConfigureAwait(false);
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogError("I/O error while writing DOC output", ex);
+                    throw new ConversionException(
+                        "Failed to write DOC output due to an I/O error.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    _logger.LogError("Access denied while writing DOC output", ex);
+                    throw new ConversionException(
+                        "Failed to write DOC output due to insufficient permissions.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+                catch (ObjectDisposedException ex)
+                {
+                    _logger.LogError("Output stream is unavailable while writing DOC output", ex);
+                    throw new ConversionException(
+                        "Failed to write DOC output because the output stream is unavailable.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+                catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException || ex is OperationCanceledException))
+                {
+                    _logger.LogError("Unexpected error while writing DOC output", ex);
+                    throw new ConversionException(
+                        "An unexpected error occurred while writing DOC output.",
+                        ConversionStage.Writing,
+                        ex);
+                }
+
+                await FinalizeOutputAsync(docStream, cancellationToken).ConfigureAwait(false);
                 
                 _logger.LogDebug("Async stream conversion completed");
             }
@@ -275,22 +404,6 @@ namespace Nedev.FileConverters.DocxToDoc
             {
                 _logger.LogWarning("Async conversion cancelled");
                 throw;
-            }
-            catch (FileNotFoundException ex)
-            {
-                _logger.LogError("Required file not found in DOCX archive", ex);
-                throw new ConversionException(
-                    "The DOCX file is missing required components.",
-                    ConversionStage.Reading,
-                    ex);
-            }
-            catch (InvalidDataException ex)
-            {
-                _logger.LogError("Invalid DOCX format", ex);
-                throw new ConversionException(
-                    "The input file is not a valid DOCX file or is corrupted.",
-                    ConversionStage.Parsing,
-                    ex);
             }
             catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException || ex is OperationCanceledException))
             {
@@ -333,6 +446,122 @@ namespace Nedev.FileConverters.DocxToDoc
             }
 
             _logger.LogDebug($"Input file validated: {fileInfo.Length} bytes");
+        }
+
+        private FileStream OpenInputStream(string docxPath, string? docPath)
+        {
+            try
+            {
+                return new FileStream(docxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }
+            catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException))
+            {
+                _logger.LogError($"Failed to open input file: '{docxPath}'", ex);
+                throw new ConversionException(
+                    $"Failed to read input file '{docxPath}'.",
+                    docxPath,
+                    docPath,
+                    ConversionStage.Reading,
+                    ex);
+            }
+        }
+
+        private void FinalizeOutput(Stream docStream)
+        {
+            try
+            {
+                docStream.Flush();
+            }
+            catch (IOException ex)
+            {
+                _logger.LogError("I/O error while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "Failed to finalize DOC output due to an I/O error.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogError("Access denied while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "Failed to finalize DOC output due to insufficient permissions.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+            catch (ObjectDisposedException ex)
+            {
+                _logger.LogError("Output stream is unavailable while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "Failed to finalize DOC output because the output stream is unavailable.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+            catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException))
+            {
+                _logger.LogError("Unexpected error while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "An unexpected error occurred while finalizing DOC output.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+        }
+
+        private async Task FinalizeOutputAsync(Stream docStream, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await docStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException ex)
+            {
+                _logger.LogError("I/O error while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "Failed to finalize DOC output due to an I/O error.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogError("Access denied while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "Failed to finalize DOC output due to insufficient permissions.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+            catch (ObjectDisposedException ex)
+            {
+                _logger.LogError("Output stream is unavailable while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "Failed to finalize DOC output because the output stream is unavailable.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+            catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException || ex is OperationCanceledException))
+            {
+                _logger.LogError("Unexpected error while finalizing DOC output", ex);
+                throw new ConversionException(
+                    "An unexpected error occurred while finalizing DOC output.",
+                    ConversionStage.Finalizing,
+                    ex);
+            }
+        }
+
+        private FileStream OpenOutputStream(string? docxPath, string docPath)
+        {
+            try
+            {
+                return new FileStream(docPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            }
+            catch (Exception ex) when (!(ex is ArgumentNullException || ex is ArgumentException || ex is ConversionException))
+            {
+                _logger.LogError($"Failed to open output file: '{docPath}'", ex);
+                throw new ConversionException(
+                    $"Failed to create output file '{docPath}'.",
+                    docxPath,
+                    docPath,
+                    ConversionStage.Writing,
+                    ex);
+            }
         }
 
         private static int CountImages(Model.DocumentModel documentModel)
