@@ -2373,6 +2373,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         private static bool TryReadDxaWidth(XmlReader xmlReader, out int width)
         {
             string? type = xmlReader.GetAttribute("w:type");
+            if (string.Equals(type, "nil", StringComparison.OrdinalIgnoreCase))
+            {
+                width = 0;
+                return true;
+            }
+
             if (!string.IsNullOrEmpty(type) && !string.Equals(type, "dxa", StringComparison.OrdinalIgnoreCase))
             {
                 width = 0;
@@ -2583,21 +2589,40 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 case "b":
                     properties.IsBold = !IsFalseValue(reader.GetAttribute("w:val"));
                     return true;
+                case "bCs":
+                    properties.IsBold = !IsFalseValue(reader.GetAttribute("w:val"));
+                    return true;
                 case "i":
                     properties.IsItalic = !IsFalseValue(reader.GetAttribute("w:val"));
                     return true;
+                case "iCs":
+                    properties.IsItalic = !IsFalseValue(reader.GetAttribute("w:val"));
+                    return true;
                 case "strike":
+                    properties.IsStrike = !IsFalseValue(reader.GetAttribute("w:val"));
+                    return true;
+                case "dstrike":
                     properties.IsStrike = !IsFalseValue(reader.GetAttribute("w:val"));
                     return true;
                 case "u":
                     string underlineValue = reader.GetAttribute("w:val") ?? "none";
                     properties.Underline = underlineValue switch
                     {
+                        "words" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Single,
                         "single" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Single,
                         "double" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Double,
                         "thick" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Thick,
+                        "dash" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed,
+                        "dotDash" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed,
+                        "dotDotDash" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed,
                         "dotted" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dotted,
+                        "dottedHeavy" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dotted,
                         "dashed" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed,
+                        "dashLong" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed,
+                        "dashLongHeavy" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed,
+                        "wavy" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Wave,
+                        "wavyDouble" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Wave,
+                        "wavyHeavy" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Wave,
                         "wave" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Wave,
                         _ => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.None
                     };
@@ -2623,6 +2648,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     if (int.TryParse(reader.GetAttribute("w:val"), out int size))
                     {
                         properties.FontSize = size;
+                    }
+                    return true;
+                case "szCs":
+                    if (int.TryParse(reader.GetAttribute("w:val"), out int csSize))
+                    {
+                        properties.FontSize = csSize;
                     }
                     return true;
                 default:

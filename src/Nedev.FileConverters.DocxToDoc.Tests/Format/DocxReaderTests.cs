@@ -97,6 +97,86 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithDoubleStrike_ParsesAsStrike()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:rPr><w:dstrike/></w:rPr><w:t>DoubleStrike</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Equal("DoubleStrike", run.Text);
+            Assert.True(run.Properties.IsStrike);
+        }
+
+        [Fact]
+        public void ReadDocument_WithComplexScriptFormatting_ParsesProperties()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:rPr><w:bCs/><w:iCs/><w:szCs w:val=\"30\"/></w:rPr><w:t>ComplexScript</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Equal("ComplexScript", run.Text);
+            Assert.True(run.Properties.IsBold);
+            Assert.True(run.Properties.IsItalic);
+            Assert.Equal(30, run.Properties.FontSize);
+        }
+
+        [Fact]
+        public void ReadDocument_WithExtendedUnderlineValues_ParsesClosestSupportedTypes()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:rPr><w:u w:val=\"words\"/></w:rPr><w:t>Words</w:t></w:r>" +
+                             "<w:r><w:rPr><w:u w:val=\"dotDash\"/></w:rPr><w:t> Dash</w:t></w:r>" +
+                             "<w:r><w:rPr><w:u w:val=\"wavyDouble\"/></w:rPr><w:t> Wave</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+            var runs = Assert.Single(model.Paragraphs).Runs;
+
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Single, runs[0].Properties.Underline);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Dashed, runs[1].Properties.Underline);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Wave, runs[2].Properties.Underline);
+        }
+
+        [Fact]
         public void ReadDocument_WithTabbedAndBrokenRun_AppendsAllRunFragments()
         {
             using var ms = new MemoryStream();

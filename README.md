@@ -42,7 +42,7 @@ The implementation is no longer limited to plain text and basic formatting. In t
 - table cell spacing (`tblCellSpacing`) heuristics affecting effective cell width and row advance
 - run-aware paragraph width estimation that uses per-run font size and a character-width heuristic instead of only raw character count
 
-Current local validation status: `316/316` tests passing, and the package builds and packs successfully from the current workspace.
+Current local validation status (latest local run): `426/426` tests passing, and the package builds and packs successfully from the current workspace.
 
 ## Feature Coverage
 
