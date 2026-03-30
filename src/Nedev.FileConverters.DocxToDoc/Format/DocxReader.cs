@@ -2579,8 +2579,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (!int.TryParse(xmlReader.GetAttribute("w:sz"), out int eighthPointWidth))
             {
-                width = 0;
-                return false;
+                eighthPointWidth = 4;
             }
 
             width = (int)Math.Round(Math.Max(0, eighthPointWidth) * 2.5d, MidpointRounding.AwayFromZero);
