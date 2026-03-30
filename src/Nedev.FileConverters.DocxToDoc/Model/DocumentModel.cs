@@ -205,6 +205,8 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     public class TableRowModel
     {
         public List<TableCellModel> Cells { get; } = new List<TableCellModel>();
+        public bool IsHeader { get; set; }
+        public bool CannotSplit { get; set; }
         public int HeightTwips { get; set; }
         public TableRowHeightRule HeightRule { get; set; } = TableRowHeightRule.Auto;
     }
@@ -223,6 +225,7 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public int Width { get; set; }
         public TableWidthUnit WidthUnit { get; set; } = TableWidthUnit.Dxa;
         public int GridSpan { get; set; } = 1;
+        public TableCellHorizontalMerge HorizontalMerge { get; set; } = TableCellHorizontalMerge.None;
         public TableCellVerticalMerge VerticalMerge { get; set; } = TableCellVerticalMerge.None;
         public TableCellVerticalAlignment VerticalAlignment { get; set; } = TableCellVerticalAlignment.Top;
         public bool HasLeftPaddingOverride { get; set; }
@@ -255,6 +258,13 @@ namespace Nedev.FileConverters.DocxToDoc.Model
     }
 
     public enum TableCellVerticalMerge
+    {
+        None = 0,
+        Restart = 1,
+        Continue = 2
+    }
+
+    public enum TableCellHorizontalMerge
     {
         None = 0,
         Restart = 1,

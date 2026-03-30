@@ -190,6 +190,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.TableModel? currentTable = null;
             Nedev.FileConverters.DocxToDoc.Model.TableRowModel? currentRow = null;
             Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentCell = null;
+            Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentRowHorizontalMergeAnchor = null;
             int currentRowGridColumnIndex = 0;
             bool insideTableCellMargins = false;
             bool insideCellMargins = false;
@@ -215,6 +216,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentRow = new Nedev.FileConverters.DocxToDoc.Model.TableRowModel();
                         currentTable.Rows.Add(currentRow);
+                        currentRowHorizontalMergeAnchor = null;
                         currentRowGridColumnIndex = 0;
                     }
                     else if (localName == "tc" && currentRow != null)
@@ -236,6 +238,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             "atLeast" => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.AtLeast,
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.Auto
                         };
+                    }
+                    else if (localName == "tblHeader" && currentRow != null)
+                    {
+                        currentRow.IsHeader = !IsFalseValue(xmlReader.GetAttribute("w:val"));
+                    }
+                    else if (localName == "cantSplit" && currentRow != null)
+                    {
+                        currentRow.CannotSplit = !IsFalseValue(xmlReader.GetAttribute("w:val"));
                     }
                     else if (localName == "tcW" && currentCell != null)
                     {
@@ -295,6 +305,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             currentCell.GridSpan = gridSpan;
                         }
+                    }
+                    else if (localName == "hMerge" && currentCell != null)
+                    {
+                        currentCell.HorizontalMerge = ParseHorizontalMerge(xmlReader.GetAttribute("w:val"));
                     }
                     else if (localName == "vMerge" && currentCell != null)
                     {
@@ -818,12 +832,46 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (currentCell != null)
                         {
-                            if (currentCell.Width <= 0 && currentTable != null)
+                            if (currentCell.HorizontalMerge == Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Continue &&
+                                currentRow != null &&
+                                currentRowHorizontalMergeAnchor != null)
                             {
-                                currentCell.Width = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                int mergedWidth = currentCell.Width;
+                                if (mergedWidth <= 0 && currentTable != null)
+                                {
+                                    mergedWidth = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                }
+
+                                currentRowHorizontalMergeAnchor.GridSpan += Math.Max(1, currentCell.GridSpan);
+                                if (mergedWidth > 0)
+                                {
+                                    currentRowHorizontalMergeAnchor.Width = Math.Max(0, currentRowHorizontalMergeAnchor.Width) + mergedWidth;
+                                }
+
+                                currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
+                                if (currentRow.Cells.Count > 0 && ReferenceEquals(currentRow.Cells[currentRow.Cells.Count - 1], currentCell))
+                                {
+                                    currentRow.Cells.RemoveAt(currentRow.Cells.Count - 1);
+                                }
+                            }
+                            else
+                            {
+                                if (currentCell.Width <= 0 && currentTable != null)
+                                {
+                                    currentCell.Width = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                }
+
+                                currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
                             }
 
-                            currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
+                            if (currentCell.HorizontalMerge == Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Restart)
+                            {
+                                currentRowHorizontalMergeAnchor = currentCell;
+                            }
+                            else if (currentCell.HorizontalMerge == Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None)
+                            {
+                                currentRowHorizontalMergeAnchor = null;
+                            }
                         }
 
                         currentCell = null;
@@ -989,6 +1037,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.TableModel? currentTable = null;
             Nedev.FileConverters.DocxToDoc.Model.TableRowModel? currentRow = null;
             Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentCell = null;
+            Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentRowHorizontalMergeAnchor = null;
             int currentRowGridColumnIndex = 0;
             bool insideTableCellMargins = false;
             bool insideCellMargins = false;
@@ -1009,6 +1058,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentRow = new Nedev.FileConverters.DocxToDoc.Model.TableRowModel();
                         currentTable.Rows.Add(currentRow);
+                        currentRowHorizontalMergeAnchor = null;
                         currentRowGridColumnIndex = 0;
                     }
                     else if (localName == "tc" && currentRow != null)
@@ -1030,6 +1080,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             "atLeast" => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.AtLeast,
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.Auto
                         };
+                    }
+                    else if (localName == "tblHeader" && currentRow != null)
+                    {
+                        currentRow.IsHeader = !IsFalseValue(reader.GetAttribute("w:val"));
+                    }
+                    else if (localName == "cantSplit" && currentRow != null)
+                    {
+                        currentRow.CannotSplit = !IsFalseValue(reader.GetAttribute("w:val"));
                     }
                     else if (localName == "tcW" && currentCell != null)
                     {
@@ -1089,6 +1147,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             currentCell.GridSpan = gridSpan;
                         }
+                    }
+                    else if (localName == "hMerge" && currentCell != null)
+                    {
+                        currentCell.HorizontalMerge = ParseHorizontalMerge(reader.GetAttribute("w:val"));
                     }
                     else if (localName == "vMerge" && currentCell != null)
                     {
@@ -1469,12 +1531,46 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         if (currentCell != null)
                         {
-                            if (currentCell.Width <= 0 && currentTable != null)
+                            if (currentCell.HorizontalMerge == Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Continue &&
+                                currentRow != null &&
+                                currentRowHorizontalMergeAnchor != null)
                             {
-                                currentCell.Width = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                int mergedWidth = currentCell.Width;
+                                if (mergedWidth <= 0 && currentTable != null)
+                                {
+                                    mergedWidth = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                }
+
+                                currentRowHorizontalMergeAnchor.GridSpan += Math.Max(1, currentCell.GridSpan);
+                                if (mergedWidth > 0)
+                                {
+                                    currentRowHorizontalMergeAnchor.Width = Math.Max(0, currentRowHorizontalMergeAnchor.Width) + mergedWidth;
+                                }
+
+                                currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
+                                if (currentRow.Cells.Count > 0 && ReferenceEquals(currentRow.Cells[currentRow.Cells.Count - 1], currentCell))
+                                {
+                                    currentRow.Cells.RemoveAt(currentRow.Cells.Count - 1);
+                                }
+                            }
+                            else
+                            {
+                                if (currentCell.Width <= 0 && currentTable != null)
+                                {
+                                    currentCell.Width = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                }
+
+                                currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
                             }
 
-                            currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
+                            if (currentCell.HorizontalMerge == Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Restart)
+                            {
+                                currentRowHorizontalMergeAnchor = currentCell;
+                            }
+                            else if (currentCell.HorizontalMerge == Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None)
+                            {
+                                currentRowHorizontalMergeAnchor = null;
+                            }
                         }
 
                         currentCell = null;
@@ -2425,6 +2521,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 "nil" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
                 "none" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
                 _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue
+            };
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge ParseHorizontalMerge(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Continue;
+            }
+
+            return value.ToLowerInvariant() switch
+            {
+                "restart" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Restart,
+                "continue" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Continue,
+                "false" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None,
+                "0" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None,
+                "off" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None,
+                "nil" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None,
+                "none" => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.None,
+                _ => Nedev.FileConverters.DocxToDoc.Model.TableCellHorizontalMerge.Continue
             };
         }
 
