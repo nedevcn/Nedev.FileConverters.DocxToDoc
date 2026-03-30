@@ -7,14 +7,13 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
 {
     public class CliTests
     {
-        private string? GetCliPath()
+        private string GetCliPath()
         {
-            // Try to find the CLI DLL in common build locations
             var possiblePaths = new[]
             {
-                Path.Combine("..", "Nedev.FileConverters.DocxToDoc.Cli", "bin", "Debug", "net8.0", "Nedev.FileConverters.DocxToDoc.Cli.dll"),
-                Path.Combine("..", "Nedev.FileConverters.DocxToDoc.Cli", "bin", "Release", "net8.0", "Nedev.FileConverters.DocxToDoc.Cli.dll"),
-                Path.Combine("..", "..", "Nedev.FileConverters.DocxToDoc.Cli", "bin", "Debug", "net8.0", "Nedev.FileConverters.DocxToDoc.Cli.dll"),
+                Path.Combine(AppContext.BaseDirectory, "Nedev.FileConverters.DocxToDoc.Cli.dll"),
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Nedev.FileConverters.DocxToDoc.Cli", "bin", "Debug", "net8.0", "Nedev.FileConverters.DocxToDoc.Cli.dll"),
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Nedev.FileConverters.DocxToDoc.Cli", "bin", "Release", "net8.0", "Nedev.FileConverters.DocxToDoc.Cli.dll")
             };
 
             foreach (var path in possiblePaths)
@@ -26,14 +25,12 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
                 }
             }
 
-            return null;
+            throw new FileNotFoundException("CLI assembly was not found. Ensure test project references and builds the CLI project.");
         }
 
-        private ProcessStartInfo? CreateStartInfo(string arguments)
+        private ProcessStartInfo CreateStartInfo(string arguments)
         {
             var cliPath = GetCliPath();
-            if (cliPath == null) return null;
-
             return new ProcessStartInfo
             {
                 FileName = "dotnet",
@@ -48,21 +45,14 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
         [Fact]
         public void Cli_Help_ReturnsZero()
         {
-            // Arrange
             var psi = CreateStartInfo("--help");
-            if (psi == null)
-            {
-                // Skip test if CLI not built
-                return;
-            }
 
-            // Act
             using var process = Process.Start(psi);
-            process?.WaitForExit();
-            string output = process?.StandardOutput.ReadToEnd() ?? "";
+            Assert.NotNull(process);
+            process!.WaitForExit();
+            string output = process.StandardOutput.ReadToEnd();
 
-            // Assert
-            Assert.Equal(0, process?.ExitCode);
+            Assert.Equal(0, process.ExitCode);
             Assert.Contains("Usage:", output);
             Assert.Contains("Options:", output);
         }
@@ -70,47 +60,32 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
         [Fact]
         public void Cli_NoArguments_ReturnsError()
         {
-            // Arrange
             var psi = CreateStartInfo("");
-            if (psi == null)
-            {
-                // Skip test if CLI not built
-                return;
-            }
 
-            // Act
             using var process = Process.Start(psi);
-            process?.WaitForExit();
+            Assert.NotNull(process);
+            process!.WaitForExit();
 
-            // Assert
-            Assert.Equal(1, process?.ExitCode);
+            Assert.Equal(1, process.ExitCode);
         }
 
         [Fact]
         public void Cli_NonExistentFile_ReturnsError()
         {
-            // Arrange
             var psi = CreateStartInfo("nonexistent.docx output.doc");
-            if (psi == null)
-            {
-                // Skip test if CLI not built
-                return;
-            }
 
-            // Act
             using var process = Process.Start(psi);
-            process?.WaitForExit();
-            string error = process?.StandardError.ReadToEnd() ?? "";
+            Assert.NotNull(process);
+            process!.WaitForExit();
+            string error = process.StandardError.ReadToEnd();
 
-            // Assert
-            Assert.Equal(2, process?.ExitCode);
+            Assert.Equal(2, process.ExitCode);
             Assert.Contains("does not exist", error);
         }
 
         [Fact]
         public void Cli_VerboseFlag_ShowsDetails()
         {
-            // Arrange - Create a test docx
             string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
             Directory.CreateDirectory(tempDir);
             string inputFile = Path.Combine(tempDir, "test.docx");
@@ -118,23 +93,15 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
 
             try
             {
-                // Create minimal docx
                 CreateMinimalDocx(inputFile);
 
                 var psi = CreateStartInfo($"-v \"{inputFile}\" \"{outputFile}\"");
-                if (psi == null)
-                {
-                    // Skip test if CLI not built
-                    return;
-                }
-
-                // Act
                 using var process = Process.Start(psi);
-                process?.WaitForExit();
-                string output = process?.StandardOutput.ReadToEnd() ?? "";
+                Assert.NotNull(process);
+                process!.WaitForExit();
+                string output = process.StandardOutput.ReadToEnd();
 
-                // Assert
-                Assert.Equal(0, process?.ExitCode);
+                Assert.Equal(0, process.ExitCode);
                 Assert.Contains("Converting:", output);
                 Assert.Contains("bytes", output);
             }

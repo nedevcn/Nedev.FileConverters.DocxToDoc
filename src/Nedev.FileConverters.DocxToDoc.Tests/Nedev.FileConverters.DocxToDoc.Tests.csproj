@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Nedev.FileConverters.DocxToDoc\Nedev.FileConverters.DocxToDoc.csproj" />
+    <ProjectReference Include="..\Nedev.FileConverters.DocxToDoc.Cli\Nedev.FileConverters.DocxToDoc.Cli.csproj" />
   </ItemGroup>
 
 </Project>
