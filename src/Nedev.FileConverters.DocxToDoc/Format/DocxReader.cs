@@ -295,9 +295,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto
                         };
 
-                        if (int.TryParse(widthValue, out int preferredWidthValue))
+                        if ((currentTable.PreferredWidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa ||
+                             currentTable.PreferredWidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct) &&
+                            int.TryParse(widthValue, out int preferredWidthValue))
                         {
                             currentTable.PreferredWidthValue = preferredWidthValue;
+                        }
+                        else
+                        {
+                            currentTable.PreferredWidthValue = 0;
                         }
                     }
                     else if (localName == "gridSpan" && currentCell != null)
@@ -1142,9 +1148,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto
                         };
 
-                        if (int.TryParse(widthValue, out int preferredWidthValue))
+                        if ((currentTable.PreferredWidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa ||
+                             currentTable.PreferredWidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct) &&
+                            int.TryParse(widthValue, out int preferredWidthValue))
                         {
                             currentTable.PreferredWidthValue = preferredWidthValue;
+                        }
+                        else
+                        {
+                            currentTable.PreferredWidthValue = 0;
                         }
                     }
                     else if (localName == "gridSpan" && currentCell != null)
