@@ -2868,16 +2868,34 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 "tab" => "\t",
                 "ptab" => "\t",
                 "cr" => "\v",
-                "br" => string.Equals(reader.GetAttribute("w:type"), "page", StringComparison.OrdinalIgnoreCase)
-                    ? "\f"
-                    : string.Equals(reader.GetAttribute("w:type"), "column", StringComparison.OrdinalIgnoreCase)
-                        ? "\x000E"
-                        : "\v",
+                "br" => ResolveBreakFragment(reader),
                 "lastRenderedPageBreak" => "\f",
                 "noBreakHyphen" => "\u2011",
                 "softHyphen" => "\u00AD",
                 "sym" => ReadSymbolFragment(reader),
                 _ => string.Empty
+            };
+        }
+
+        private static string ResolveBreakFragment(XmlReader reader)
+        {
+            string? breakType = reader.GetAttribute("w:type");
+            if (string.Equals(breakType, "page", StringComparison.OrdinalIgnoreCase))
+            {
+                return "\f";
+            }
+
+            if (string.Equals(breakType, "column", StringComparison.OrdinalIgnoreCase))
+            {
+                return "\x000E";
+            }
+
+            return reader.GetAttribute("w:clear")?.ToLowerInvariant() switch
+            {
+                "left" => "\x001C",
+                "right" => "\x001D",
+                "all" => "\x001E",
+                _ => "\v"
             };
         }
 

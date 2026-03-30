@@ -4030,7 +4030,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static bool IsParagraphBreakCharacter(char character)
         {
-            return character == '\n' || character == '\r' || character == '\v' || character == '\f' || character == '\x000E';
+            return character == '\n' || character == '\r' || character == '\v' || character == '\f' || character == '\x000E' || character == '\x001C' || character == '\x001D' || character == '\x001E';
         }
 
         private static double EstimateCharacterWidthTwips(char character, int fontSizeTwips, bool isMonospace)

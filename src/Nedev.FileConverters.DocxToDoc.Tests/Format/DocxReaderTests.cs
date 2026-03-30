@@ -291,6 +291,59 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithTextWrappingBreakClearAll_AppendsClearAllBreakCharacter()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:t>A</w:t><w:br w:type=\"textWrapping\" w:clear=\"all\"/><w:t>B</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            char clearAllBreak = '\x001E';
+            Assert.Equal($"A{clearAllBreak}B", run.Text);
+            Assert.Equal($"A{clearAllBreak}B\r", model.TextBuffer);
+        }
+
+        [Theory]
+        [InlineData("left", '\x001C')]
+        [InlineData("right", '\x001D')]
+        public void ReadDocument_WithTextWrappingBreakClearSide_AppendsExpectedClearBreakCharacter(string clearValue, char expectedBreak)
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             $"<w:r><w:t>A</w:t><w:br w:type=\"textWrapping\" w:clear=\"{clearValue}\"/><w:t>B</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Equal($"A{expectedBreak}B", run.Text);
+            Assert.Equal($"A{expectedBreak}B\r", model.TextBuffer);
+        }
+
+        [Fact]
         public void ReadDocument_WithPageBreakBefore_ParsesParagraphProperty()
         {
             using var ms = new MemoryStream();

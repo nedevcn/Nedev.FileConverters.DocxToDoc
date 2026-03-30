@@ -656,6 +656,56 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
             Assert.Equal(-1, pageBreakIndex);
         }
 
+        [Fact]
+        public void Convert_WithTextWrappingBreakClearAll_PreservesClearAllBreakCharacter()
+        {
+            var converter = new DocxToDocConverter();
+            byte[] docx = CreateDocxWithTextWrappingClearAllBreak();
+            using var input = new MemoryStream(docx);
+            using var output = new MemoryStream();
+
+            converter.Convert(input, output);
+            output.Position = 0;
+
+            using var compoundFile = new CompoundFile(output);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocumentStream));
+            string mainStoryText = ExtractMainStoryText(wordDocumentStream.GetData());
+
+            int beforeIndex = mainStoryText.IndexOf("Before", StringComparison.Ordinal);
+            int afterIndex = mainStoryText.IndexOf("After", StringComparison.Ordinal);
+            int clearAllBreakIndex = mainStoryText.IndexOf('\x001E');
+
+            Assert.True(beforeIndex >= 0);
+            Assert.True(clearAllBreakIndex > beforeIndex);
+            Assert.True(afterIndex > clearAllBreakIndex);
+        }
+
+        [Theory]
+        [InlineData("left", '\x001C')]
+        [InlineData("right", '\x001D')]
+        public void Convert_WithTextWrappingBreakClearSide_PreservesExpectedBreakCharacter(string clearValue, char expectedBreak)
+        {
+            var converter = new DocxToDocConverter();
+            byte[] docx = CreateDocxWithTextWrappingClearBreak(clearValue);
+            using var input = new MemoryStream(docx);
+            using var output = new MemoryStream();
+
+            converter.Convert(input, output);
+            output.Position = 0;
+
+            using var compoundFile = new CompoundFile(output);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocumentStream));
+            string mainStoryText = ExtractMainStoryText(wordDocumentStream.GetData());
+
+            int beforeIndex = mainStoryText.IndexOf("Before", StringComparison.Ordinal);
+            int afterIndex = mainStoryText.IndexOf("After", StringComparison.Ordinal);
+            int clearBreakIndex = mainStoryText.IndexOf(expectedBreak);
+
+            Assert.True(beforeIndex >= 0);
+            Assert.True(clearBreakIndex > beforeIndex);
+            Assert.True(afterIndex > clearBreakIndex);
+        }
+
         private static byte[] CreateDocxWithCommentReplyRange()
         {
             using var ms = new MemoryStream();
@@ -1126,6 +1176,48 @@ namespace Nedev.FileConverters.DocxToDoc.Tests
                         "<w:body>" +
                         "<w:p><w:r><w:t>First</w:t></w:r></w:p>" +
                         "<w:p><w:pPr><w:pageBreakBefore w:val=\"false\"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>" +
+                        "</w:body>" +
+                        "</w:document>");
+                }
+            }
+
+            return ms.ToArray();
+        }
+
+        private static byte[] CreateDocxWithTextWrappingClearAllBreak()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                        "<w:body>" +
+                        "<w:p><w:r><w:t>Before</w:t><w:br w:type=\"textWrapping\" w:clear=\"all\"/><w:t>After</w:t></w:r></w:p>" +
+                        "</w:body>" +
+                        "</w:document>");
+                }
+            }
+
+            return ms.ToArray();
+        }
+
+        private static byte[] CreateDocxWithTextWrappingClearBreak(string clearValue)
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                        "<w:body>" +
+                        $"<w:p><w:r><w:t>Before</w:t><w:br w:type=\"textWrapping\" w:clear=\"{clearValue}\"/><w:t>After</w:t></w:r></w:p>" +
                         "</w:body>" +
                         "</w:document>");
                 }
