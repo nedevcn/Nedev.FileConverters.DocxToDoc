@@ -646,6 +646,604 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithStyleBasedOnChainAndExplicitLeftAlignment_PreservesLeftOverride()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"Child\"/></w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:name w:val=\"Base\"/><w:pPr><w:jc w:val=\"center\"/></w:pPr></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\"><w:name w:val=\"Child\"/><w:basedOn w:val=\"Base\"/><w:pPr><w:jc w:val=\"left\"/></w:pPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left, paragraph.Properties.Alignment);
+            Assert.True(paragraph.Properties.AlignmentSpecified);
+        }
+
+        [Fact]
+        public void ReadDocument_WithStyleBasedOnChainAndExplicitLineSpacing_PreservesLineSpacingOverride()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"Child\"/></w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:name w:val=\"Base\"/><w:pPr><w:spacing w:line=\"360\" w:lineRule=\"exact\"/></w:pPr></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\"><w:name w:val=\"Child\"/><w:basedOn w:val=\"Base\"/><w:pPr><w:spacing w:line=\"0\" w:lineRule=\"auto\"/></w:pPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(0, paragraph.Properties.LineSpacing);
+            Assert.True(paragraph.Properties.LineSpacingSpecified);
+            Assert.Equal("auto", paragraph.Properties.LineSpacingRule);
+            Assert.True(paragraph.Properties.LineSpacingRuleSpecified);
+        }
+
+        [Fact]
+        public void ReadDocument_WithStyleBasedOnChainAndExplicitZeroNumbering_PreservesNumberingOverride()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"Child\"/></w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:name w:val=\"Base\"/><w:pPr><w:numPr><w:numId w:val=\"9\"/><w:ilvl w:val=\"3\"/></w:numPr></w:pPr></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\"><w:name w:val=\"Child\"/><w:basedOn w:val=\"Base\"/><w:pPr><w:numPr><w:numId w:val=\"0\"/><w:ilvl w:val=\"0\"/></w:numPr></w:pPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(0, paragraph.Properties.NumberingId);
+            Assert.Equal(0, paragraph.Properties.NumberingLevel);
+            Assert.True(paragraph.Properties.NumberingIdSpecified);
+            Assert.True(paragraph.Properties.NumberingLevelSpecified);
+        }
+
+        [Fact]
+        public void ReadDocument_WithDirectParagraphFormatting_PreservesDirectOverridesOverStyleChain()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr>" +
+                                 "<w:pStyle w:val=\"Child\"/>" +
+                                 "<w:jc w:val=\"left\"/>" +
+                                 "<w:numPr><w:numId w:val=\"0\"/><w:ilvl w:val=\"0\"/></w:numPr>" +
+                                 "<w:ind w:left=\"0\" w:right=\"0\" w:firstLine=\"0\"/>" +
+                                 "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"0\" w:lineRule=\"auto\"/>" +
+                                 "<w:keepNext w:val=\"false\"/>" +
+                                 "<w:keepLines w:val=\"false\"/>" +
+                                 "<w:contextualSpacing w:val=\"false\"/>" +
+                                 "<w:widowControl w:val=\"false\"/>" +
+                                 "<w:pageBreakBefore w:val=\"false\"/>" +
+                                 "</w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:name w:val=\"Base\"/><w:pPr>" +
+                                 "<w:jc w:val=\"center\"/>" +
+                                 "<w:numPr><w:numId w:val=\"9\"/><w:ilvl w:val=\"3\"/></w:numPr>" +
+                                 "<w:ind w:left=\"720\" w:right=\"360\" w:firstLine=\"240\"/>" +
+                                 "<w:spacing w:before=\"180\" w:after=\"240\" w:line=\"360\" w:lineRule=\"exact\"/>" +
+                                 "<w:keepNext/><w:keepLines/><w:contextualSpacing/><w:widowControl/><w:pageBreakBefore/>" +
+                                 "</w:pPr></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\"><w:name w:val=\"Child\"/><w:basedOn w:val=\"Base\"/></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left, paragraph.Properties.Alignment);
+            Assert.Equal(0, paragraph.Properties.NumberingId);
+            Assert.Equal(0, paragraph.Properties.NumberingLevel);
+            Assert.Equal(0, paragraph.Properties.LeftIndentTwips);
+            Assert.Equal(0, paragraph.Properties.RightIndentTwips);
+            Assert.Equal(0, paragraph.Properties.FirstLineIndentTwips);
+            Assert.Equal(0, paragraph.Properties.SpacingBeforeTwips);
+            Assert.Equal(0, paragraph.Properties.SpacingAfterTwips);
+            Assert.Equal(0, paragraph.Properties.LineSpacing);
+            Assert.Equal("auto", paragraph.Properties.LineSpacingRule);
+            Assert.False(paragraph.Properties.KeepNext);
+            Assert.False(paragraph.Properties.KeepLines);
+            Assert.False(paragraph.Properties.ContextualSpacing);
+            Assert.False(paragraph.Properties.WidowControl);
+            Assert.False(paragraph.Properties.PageBreakBefore);
+        }
+
+        [Theory]
+        [InlineData("keepNext", "1", "false", false)]
+        [InlineData("keepLines", "1", "0", false)]
+        [InlineData("contextualSpacing", "1", "false", false)]
+        [InlineData("widowControl", "1", "0", false)]
+        [InlineData("pageBreakBefore", "1", "false", false)]
+        [InlineData("keepNext", "0", "1", true)]
+        [InlineData("keepLines", "false", "true", true)]
+        public void ReadDocument_WithDirectParagraphBooleanFormatting_OverridesStyleChain(
+            string propertyElement,
+            string styleValue,
+            string directValue,
+            bool expectedValue)
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"Child\"/>" +
+                                 $"<w:{propertyElement} w:val=\"{directValue}\"/>" +
+                                 "</w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:name w:val=\"Base\"/><w:pPr>" +
+                                 $"<w:{propertyElement} w:val=\"{styleValue}\"/>" +
+                                 "</w:pPr></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\"><w:name w:val=\"Child\"/><w:basedOn w:val=\"Base\"/></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            (bool actualValue, bool actualSpecified) = propertyElement switch
+            {
+                "keepNext" => (paragraph.Properties.KeepNext, paragraph.Properties.KeepNextSpecified),
+                "keepLines" => (paragraph.Properties.KeepLines, paragraph.Properties.KeepLinesSpecified),
+                "contextualSpacing" => (paragraph.Properties.ContextualSpacing, paragraph.Properties.ContextualSpacingSpecified),
+                "widowControl" => (paragraph.Properties.WidowControl, paragraph.Properties.WidowControlSpecified),
+                "pageBreakBefore" => (paragraph.Properties.PageBreakBefore, paragraph.Properties.PageBreakBeforeSpecified),
+                _ => throw new InvalidOperationException()
+            };
+
+            Assert.Equal(expectedValue, actualValue);
+            Assert.True(actualSpecified);
+        }
+
+        [Theory]
+        [InlineData("alignment", "center", "left")]
+        [InlineData("numberingId", "9", "0")]
+        [InlineData("numberingLevel", "3", "0")]
+        [InlineData("leftIndent", "720", "0")]
+        [InlineData("rightIndent", "360", "0")]
+        [InlineData("firstLineIndent", "240", "0")]
+        [InlineData("spacingBefore", "180", "0")]
+        [InlineData("spacingAfter", "240", "0")]
+        [InlineData("lineSpacing", "360", "0")]
+        [InlineData("lineRule", "exact", "auto")]
+        public void ReadDocument_WithDirectParagraphNumericFormatting_OverridesStyleChain(
+            string propertyElement,
+            string styleValue,
+            string directValue)
+        {
+            string styleFragment = propertyElement switch
+            {
+                "alignment" => $"<w:jc w:val=\"{styleValue}\"/>",
+                "numberingId" => $"<w:numPr><w:numId w:val=\"{styleValue}\"/></w:numPr>",
+                "numberingLevel" => $"<w:numPr><w:ilvl w:val=\"{styleValue}\"/></w:numPr>",
+                "leftIndent" => $"<w:ind w:left=\"{styleValue}\"/>",
+                "rightIndent" => $"<w:ind w:right=\"{styleValue}\"/>",
+                "firstLineIndent" => $"<w:ind w:firstLine=\"{styleValue}\"/>",
+                "spacingBefore" => $"<w:spacing w:before=\"{styleValue}\"/>",
+                "spacingAfter" => $"<w:spacing w:after=\"{styleValue}\"/>",
+                "lineSpacing" => $"<w:spacing w:line=\"{styleValue}\"/>",
+                "lineRule" => $"<w:spacing w:lineRule=\"{styleValue}\"/>",
+                _ => throw new InvalidOperationException()
+            };
+
+            string directFragment = propertyElement switch
+            {
+                "alignment" => $"<w:jc w:val=\"{directValue}\"/>",
+                "numberingId" => $"<w:numPr><w:numId w:val=\"{directValue}\"/></w:numPr>",
+                "numberingLevel" => $"<w:numPr><w:ilvl w:val=\"{directValue}\"/></w:numPr>",
+                "leftIndent" => $"<w:ind w:left=\"{directValue}\"/>",
+                "rightIndent" => $"<w:ind w:right=\"{directValue}\"/>",
+                "firstLineIndent" => $"<w:ind w:firstLine=\"{directValue}\"/>",
+                "spacingBefore" => $"<w:spacing w:before=\"{directValue}\"/>",
+                "spacingAfter" => $"<w:spacing w:after=\"{directValue}\"/>",
+                "lineSpacing" => $"<w:spacing w:line=\"{directValue}\"/>",
+                "lineRule" => $"<w:spacing w:lineRule=\"{directValue}\"/>",
+                _ => throw new InvalidOperationException()
+            };
+
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"Child\"/>" +
+                                 directFragment +
+                                 "</w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\"><w:name w:val=\"Base\"/><w:pPr>" +
+                                 styleFragment +
+                                 "</w:pPr></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\"><w:name w:val=\"Child\"/><w:basedOn w:val=\"Base\"/></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+            var paragraph = Assert.Single(model.Paragraphs);
+
+            switch (propertyElement)
+            {
+                case "alignment":
+                    Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left, paragraph.Properties.Alignment);
+                    Assert.True(paragraph.Properties.AlignmentSpecified);
+                    break;
+                case "numberingId":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.NumberingId);
+                    Assert.True(paragraph.Properties.NumberingIdSpecified);
+                    break;
+                case "numberingLevel":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.NumberingLevel);
+                    Assert.True(paragraph.Properties.NumberingLevelSpecified);
+                    break;
+                case "leftIndent":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.LeftIndentTwips);
+                    Assert.True(paragraph.Properties.LeftIndentSpecified);
+                    break;
+                case "rightIndent":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.RightIndentTwips);
+                    Assert.True(paragraph.Properties.RightIndentSpecified);
+                    break;
+                case "firstLineIndent":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.FirstLineIndentTwips);
+                    Assert.True(paragraph.Properties.FirstLineIndentSpecified);
+                    break;
+                case "spacingBefore":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.SpacingBeforeTwips);
+                    Assert.True(paragraph.Properties.SpacingBeforeSpecified);
+                    break;
+                case "spacingAfter":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.SpacingAfterTwips);
+                    Assert.True(paragraph.Properties.SpacingAfterSpecified);
+                    break;
+                case "lineSpacing":
+                    Assert.Equal(int.Parse(directValue), paragraph.Properties.LineSpacing);
+                    Assert.True(paragraph.Properties.LineSpacingSpecified);
+                    break;
+                case "lineRule":
+                    Assert.Equal(directValue, paragraph.Properties.LineSpacingRule);
+                    Assert.True(paragraph.Properties.LineSpacingRuleSpecified);
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+
+        [Theory]
+        [InlineData("b", "true", "false", false)]
+        [InlineData("b", "false", "true", true)]
+        [InlineData("i", "true", "false", false)]
+        [InlineData("i", "false", "true", true)]
+        [InlineData("strike", "true", "false", false)]
+        [InlineData("strike", "false", "true", true)]
+        public void ReadDocument_WithDirectRunBooleanFormatting_OverridesStyleChain(
+            string propertyElement,
+            string styleValue,
+            string directValue,
+            bool expectedValue)
+        {
+            byte[] docx = CreateDocxWithStyledSingleRun(
+                paragraphStyleRPrXml: $"<w:{propertyElement} w:val=\"{styleValue}\"/>",
+                runStyleRPrXml: $"<w:{propertyElement} w:val=\"{styleValue}\"/>",
+                directRunRPrXml: $"<w:{propertyElement} w:val=\"{directValue}\"/>");
+            var run = ReadSingleRunFromDocx(docx);
+            (bool actualValue, bool actualSpecified) = propertyElement switch
+            {
+                "b" => (run.Properties.IsBold, run.Properties.IsBoldSpecified),
+                "i" => (run.Properties.IsItalic, run.Properties.IsItalicSpecified),
+                "strike" => (run.Properties.IsStrike, run.Properties.IsStrikeSpecified),
+                _ => throw new InvalidOperationException()
+            };
+            Assert.Equal(expectedValue, actualValue);
+            Assert.True(actualSpecified);
+        }
+
+        [Fact]
+        public void ReadDocument_WithDirectRunScalarFormatting_OverridesStyleChain()
+        {
+            byte[] docx = CreateDocxWithStyledSingleRun(
+                paragraphStyleRPrXml: "<w:rFonts w:ascii=\"Calibri\"/><w:sz w:val=\"30\"/><w:u w:val=\"single\"/><w:color w:val=\"FF0000\"/>",
+                runStyleRPrXml: "<w:rFonts w:ascii=\"Arial\"/><w:sz w:val=\"24\"/><w:u w:val=\"double\"/><w:color w:val=\"00AA00\"/>",
+                directRunRPrXml: "<w:rFonts w:ascii=\"Consolas\"/><w:sz w:val=\"18\"/><w:u w:val=\"none\"/><w:color w:val=\"auto\"/>");
+            var run = ReadSingleRunFromDocx(docx);
+            Assert.Equal("Consolas", run.Properties.FontName);
+            Assert.Equal(18, run.Properties.FontSize);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.UnderlineType.None, run.Properties.Underline);
+            Assert.Null(run.Properties.Color);
+        }
+
+        [Theory]
+        [InlineData("fontName", "Calibri", "Arial", "Consolas")]
+        [InlineData("fontSize", "30", "24", "18")]
+        [InlineData("underline", "single", "double", "none")]
+        [InlineData("color", "FF0000", "00AA00", "auto")]
+        public void ReadDocument_WithDirectRunScalarFormattingMatrix_OverridesStyleChain(
+            string propertyElement,
+            string paragraphStyleValue,
+            string runStyleValue,
+            string directValue)
+        {
+            string paragraphStyleFragment = propertyElement switch
+            {
+                "fontName" => $"<w:rFonts w:ascii=\"{paragraphStyleValue}\"/>",
+                "fontSize" => $"<w:sz w:val=\"{paragraphStyleValue}\"/>",
+                "underline" => $"<w:u w:val=\"{paragraphStyleValue}\"/>",
+                "color" => $"<w:color w:val=\"{paragraphStyleValue}\"/>",
+                _ => throw new InvalidOperationException()
+            };
+
+            string runStyleFragment = propertyElement switch
+            {
+                "fontName" => $"<w:rFonts w:ascii=\"{runStyleValue}\"/>",
+                "fontSize" => $"<w:sz w:val=\"{runStyleValue}\"/>",
+                "underline" => $"<w:u w:val=\"{runStyleValue}\"/>",
+                "color" => $"<w:color w:val=\"{runStyleValue}\"/>",
+                _ => throw new InvalidOperationException()
+            };
+
+            string directFragment = propertyElement switch
+            {
+                "fontName" => $"<w:rFonts w:ascii=\"{directValue}\"/>",
+                "fontSize" => $"<w:sz w:val=\"{directValue}\"/>",
+                "underline" => $"<w:u w:val=\"{directValue}\"/>",
+                "color" => $"<w:color w:val=\"{directValue}\"/>",
+                _ => throw new InvalidOperationException()
+            };
+            byte[] docx = CreateDocxWithStyledSingleRun(paragraphStyleFragment, runStyleFragment, directFragment);
+            var run = ReadSingleRunFromDocx(docx);
+
+            switch (propertyElement)
+            {
+                case "fontName":
+                    Assert.Equal(directValue, run.Properties.FontName);
+                    Assert.True(run.Properties.FontNameSpecified);
+                    break;
+                case "fontSize":
+                    Assert.Equal(int.Parse(directValue), run.Properties.FontSize);
+                    Assert.True(run.Properties.FontSizeSpecified);
+                    break;
+                case "underline":
+                    Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.UnderlineType.None, run.Properties.Underline);
+                    Assert.True(run.Properties.UnderlineSpecified);
+                    break;
+                case "color":
+                    Assert.Null(run.Properties.Color);
+                    Assert.True(run.Properties.ColorSpecified);
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+
+        private static byte[] CreateDocxWithStyledSingleRun(string paragraphStyleRPrXml, string runStyleRPrXml, string directRunRPrXml)
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"ParagraphStyle\"/></w:pPr>" +
+                                 "<w:r><w:rPr><w:rStyle w:val=\"RunStyle\"/>" +
+                                 directRunRPrXml +
+                                 "</w:rPr><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"ParagraphStyle\"><w:name w:val=\"ParagraphStyle\"/><w:rPr>" +
+                                 paragraphStyleRPrXml +
+                                 "</w:rPr></w:style>" +
+                                 "<w:style w:type=\"character\" w:styleId=\"RunStyle\"><w:name w:val=\"RunStyle\"/><w:rPr>" +
+                                 runStyleRPrXml +
+                                 "</w:rPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            return ms.ToArray();
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.RunModel ReadSingleRunFromDocx(byte[] docx)
+        {
+            using var testStream = new MemoryStream(docx);
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+            return Assert.Single(Assert.Single(model.Paragraphs).Runs);
+        }
+
+        [Fact]
+        public void ReadDocument_WithDeletedRunAndStyleFalse_StrikeFormattingIsPreserved()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"ParagraphStyle\"/></w:pPr>" +
+                                 "<w:del><w:r><w:t>Deleted</w:t></w:r></w:del>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"ParagraphStyle\"><w:name w:val=\"ParagraphStyle\"/><w:rPr><w:strike w:val=\"false\"/></w:rPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.True(run.Properties.IsStrike);
+            Assert.True(run.Properties.IsStrikeSpecified);
+        }
+
+        [Fact]
+        public void ReadDocument_WithMathRunAndStyleFalse_ItalicAndMathFontArePreserved()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"ParagraphStyle\"/></w:pPr>" +
+                                 "<w:oMath><w:r><w:t>x+y</w:t></w:r></w:oMath>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"ParagraphStyle\"><w:name w:val=\"ParagraphStyle\"/><w:rPr><w:i w:val=\"false\"/><w:rFonts w:ascii=\"Calibri\"/></w:rPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.True(run.Properties.IsItalic);
+            Assert.True(run.Properties.IsItalicSpecified);
+            Assert.Equal("Cambria Math", run.Properties.FontName);
+            Assert.True(run.Properties.FontNameSpecified);
+        }
+
+        [Fact]
         public void ReadDocument_WithParagraphAndRunStyles_AppliesEffectiveCharacterPropertiesToRuns()
         {
             using var ms = new MemoryStream();

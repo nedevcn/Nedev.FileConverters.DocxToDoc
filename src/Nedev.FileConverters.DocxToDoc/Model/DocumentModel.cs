@@ -279,8 +279,11 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public class ParagraphProperties
         {
             public Justification Alignment { get; set; } = Justification.Left;
+            public bool AlignmentSpecified { get; set; }
             public int? NumberingId { get; set; }
+            public bool NumberingIdSpecified { get; set; }
             public int? NumberingLevel { get; set; }
+            public bool NumberingLevelSpecified { get; set; }
             public int LeftIndentTwips { get; set; }
             public bool LeftIndentSpecified { get; set; }
             public int RightIndentTwips { get; set; }
@@ -293,7 +296,9 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public int SpacingAfterTwips { get; set; }
             public bool SpacingAfterSpecified { get; set; }
             public int? LineSpacing { get; set; }
+            public bool LineSpacingSpecified { get; set; }
             public string? LineSpacingRule { get; set; }
+            public bool LineSpacingRuleSpecified { get; set; }
             public bool KeepNext { get; set; }
             public bool KeepNextSpecified { get; set; }
             public bool KeepLines { get; set; }

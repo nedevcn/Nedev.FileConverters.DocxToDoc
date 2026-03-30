@@ -483,12 +483,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     else if (localName == "numId" && currentParagraph != null)
                     {
                         if (int.TryParse(xmlReader.GetAttribute("w:val"), out int id))
+                        {
                             currentParagraph.Properties.NumberingId = id;
+                            currentParagraph.Properties.NumberingIdSpecified = true;
+                        }
                     }
                     else if (localName == "ilvl" && currentParagraph != null)
                     {
                         if (int.TryParse(xmlReader.GetAttribute("w:val"), out int lvl))
+                        {
                             currentParagraph.Properties.NumberingLevel = lvl;
+                            currentParagraph.Properties.NumberingLevelSpecified = true;
+                        }
                     }
                     else if (localName == "pStyle" && currentParagraph != null)
                     {
@@ -566,6 +572,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             "both" => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Both,
                             _ => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left
                         };
+                        currentParagraph.Properties.AlignmentSpecified = true;
                     }
                     else if (localName == "spacing" && currentParagraph != null)
                     {
@@ -584,12 +591,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         if (int.TryParse(xmlReader.GetAttribute("w:line"), out int line))
                         {
                             currentParagraph.Properties.LineSpacing = line;
+                            currentParagraph.Properties.LineSpacingSpecified = true;
                         }
 
                         string? lineRule = xmlReader.GetAttribute("w:lineRule");
                         if (!string.IsNullOrWhiteSpace(lineRule))
                         {
                             currentParagraph.Properties.LineSpacingRule = lineRule;
+                            currentParagraph.Properties.LineSpacingRuleSpecified = true;
                         }
                     }
                     else if (localName == "ind" && currentParagraph != null)
@@ -665,15 +674,19 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         if (inIns)
                         {
                             currentRun.Properties.Underline = Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Single;
+                            currentRun.Properties.UnderlineSpecified = true;
                         }
                         if (inDel)
                         {
                             currentRun.Properties.IsStrike = true;
+                            currentRun.Properties.IsStrikeSpecified = true;
                         }
                         if (inOMath)
                         {
                             currentRun.Properties.IsItalic = true;
+                            currentRun.Properties.IsItalicSpecified = true;
                             currentRun.Properties.FontName = "Cambria Math";
+                            currentRun.Properties.FontNameSpecified = true;
                         }
                         currentRunBaseProperties = CloneCharacterProperties(currentRun.Properties);
                         currentParagraph.Runs.Add(currentRun);
@@ -1136,19 +1149,22 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties target,
             Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties source)
         {
-            if (source.Alignment != Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left)
+            if (source.AlignmentSpecified)
             {
                 target.Alignment = source.Alignment;
+                target.AlignmentSpecified = true;
             }
 
-            if (source.NumberingId.HasValue)
+            if (source.NumberingIdSpecified)
             {
                 target.NumberingId = source.NumberingId;
+                target.NumberingIdSpecified = true;
             }
 
-            if (source.NumberingLevel.HasValue)
+            if (source.NumberingLevelSpecified)
             {
                 target.NumberingLevel = source.NumberingLevel;
+                target.NumberingLevelSpecified = true;
             }
 
             if (source.LeftIndentSpecified)
@@ -1186,14 +1202,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 target.SpacingAfterSpecified = true;
             }
 
-            if (source.LineSpacing.HasValue)
+            if (source.LineSpacingSpecified)
             {
                 target.LineSpacing = source.LineSpacing;
+                target.LineSpacingSpecified = true;
             }
 
-            if (!string.IsNullOrWhiteSpace(source.LineSpacingRule))
+            if (source.LineSpacingRuleSpecified)
             {
                 target.LineSpacingRule = source.LineSpacingRule;
+                target.LineSpacingRuleSpecified = true;
             }
 
             if (source.KeepNextSpecified)
@@ -1231,20 +1249,22 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties destination,
             Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties styleProps)
         {
-            if (destination.Alignment == Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left &&
-                styleProps.Alignment != Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left)
+            if (!destination.AlignmentSpecified && styleProps.AlignmentSpecified)
             {
                 destination.Alignment = styleProps.Alignment;
+                destination.AlignmentSpecified = true;
             }
 
-            if (!destination.NumberingId.HasValue && styleProps.NumberingId.HasValue)
+            if (!destination.NumberingIdSpecified && styleProps.NumberingIdSpecified)
             {
                 destination.NumberingId = styleProps.NumberingId;
+                destination.NumberingIdSpecified = true;
             }
 
-            if (!destination.NumberingLevel.HasValue && styleProps.NumberingLevel.HasValue)
+            if (!destination.NumberingLevelSpecified && styleProps.NumberingLevelSpecified)
             {
                 destination.NumberingLevel = styleProps.NumberingLevel;
+                destination.NumberingLevelSpecified = true;
             }
 
             if (!destination.LeftIndentSpecified && styleProps.LeftIndentSpecified)
@@ -1277,14 +1297,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 destination.SpacingAfterSpecified = true;
             }
 
-            if (!destination.LineSpacing.HasValue && styleProps.LineSpacing.HasValue)
+            if (!destination.LineSpacingSpecified && styleProps.LineSpacingSpecified)
             {
                 destination.LineSpacing = styleProps.LineSpacing;
+                destination.LineSpacingSpecified = true;
             }
 
-            if (string.IsNullOrWhiteSpace(destination.LineSpacingRule) && !string.IsNullOrWhiteSpace(styleProps.LineSpacingRule))
+            if (!destination.LineSpacingRuleSpecified && styleProps.LineSpacingRuleSpecified)
             {
                 destination.LineSpacingRule = styleProps.LineSpacingRule;
+                destination.LineSpacingRuleSpecified = true;
             }
 
             if (!destination.KeepNextSpecified && styleProps.KeepNextSpecified)
@@ -1324,8 +1346,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties
             {
                 Alignment = source.Alignment,
+                AlignmentSpecified = source.AlignmentSpecified,
                 NumberingId = source.NumberingId,
+                NumberingIdSpecified = source.NumberingIdSpecified,
                 NumberingLevel = source.NumberingLevel,
+                NumberingLevelSpecified = source.NumberingLevelSpecified,
                 LeftIndentTwips = source.LeftIndentTwips,
                 LeftIndentSpecified = source.LeftIndentSpecified,
                 RightIndentTwips = source.RightIndentTwips,
@@ -1338,7 +1363,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 SpacingAfterTwips = source.SpacingAfterTwips,
                 SpacingAfterSpecified = source.SpacingAfterSpecified,
                 LineSpacing = source.LineSpacing,
+                LineSpacingSpecified = source.LineSpacingSpecified,
                 LineSpacingRule = source.LineSpacingRule,
+                LineSpacingRuleSpecified = source.LineSpacingRuleSpecified,
                 KeepNext = source.KeepNext,
                 KeepNextSpecified = source.KeepNextSpecified,
                 KeepLines = source.KeepLines,
@@ -4094,6 +4121,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (int.TryParse(reader.GetAttribute("w:val"), out int id))
                 {
                     properties.NumberingId = id;
+                    properties.NumberingIdSpecified = true;
                 }
 
                 return true;
@@ -4104,6 +4132,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (int.TryParse(reader.GetAttribute("w:val"), out int level))
                 {
                     properties.NumberingLevel = level;
+                    properties.NumberingLevelSpecified = true;
                 }
 
                 return true;
@@ -4130,6 +4159,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     "both" => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Both,
                     _ => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left
                 };
+                properties.AlignmentSpecified = true;
                 return true;
             }
 
@@ -4150,12 +4180,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (int.TryParse(reader.GetAttribute("w:line"), out int line))
                 {
                     properties.LineSpacing = line;
+                    properties.LineSpacingSpecified = true;
                 }
 
                 string? lineRule = reader.GetAttribute("w:lineRule");
                 if (!string.IsNullOrWhiteSpace(lineRule))
                 {
                     properties.LineSpacingRule = lineRule;
+                    properties.LineSpacingRuleSpecified = true;
                 }
 
                 return true;
