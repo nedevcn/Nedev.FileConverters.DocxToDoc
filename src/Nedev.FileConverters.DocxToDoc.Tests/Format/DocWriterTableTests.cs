@@ -1352,6 +1352,35 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(topWithExactHeight > topWithAutoHeight);
         }
 
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_ClampsNegativeParagraphRelativePositionY_ToParagraphStart()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithExactNegative = GetOverflowClippedImageTop(
+                1200,
+                TableRowHeightRule.Exact,
+                pngBytes,
+                secondParagraphSpacingBeforeTwips: 0,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphPositionYTwips: -1800);
+            int topWithExactZero = GetOverflowClippedImageTop(
+                1200,
+                TableRowHeightRule.Exact,
+                pngBytes,
+                secondParagraphSpacingBeforeTwips: 0,
+                firstParagraphSpacingAfterTwips: 0,
+                secondParagraphPositionYTwips: 0);
+
+            Assert.Equal(topWithExactZero, topWithExactNegative);
+        }
+
         private static (int left, int top, int right, int bottom) GetBodyFloatingImageBoundsWithDistance(
             byte[] pngBytes,
             int distanceLeftTwips,

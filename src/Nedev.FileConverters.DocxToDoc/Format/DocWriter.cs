@@ -1746,7 +1746,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (isHorizontal && (normalized == "character" || normalized == "char"))
             {
-                return "paragraph";
+                return "character";
             }
 
             if (!isHorizontal && normalized == "line")
@@ -4101,6 +4101,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return 2;
             }
 
+            if (normalized == "character")
+            {
+                return 2;
+            }
+
             if (normalized == "column")
             {
                 return 1;
@@ -4146,6 +4151,16 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
 
                 return offsetTwips;
+            }
+
+            if (normalizedRelativeTo == "character")
+            {
+                if (!string.IsNullOrWhiteSpace(alignment))
+                {
+                    return ResolveAlignmentPositionTwips(alignment, "margin", sizeTwips, pageExtentTwips, leadingMarginTwips, trailingMarginTwips, isHorizontal);
+                }
+
+                return leadingMarginTwips + offsetTwips;
             }
 
             if (!string.IsNullOrWhiteSpace(alignment))

@@ -2012,6 +2012,379 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImage_KeepsTopStableWithTallPrecedingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page"));
+            int topWithTallLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "page"));
+
+            Assert.Equal(topWithoutLead, topWithTallLead);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithParagraphRelativeFloatingImage_ShiftsTopWithTallPrecedingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "paragraph"));
+            int topWithTallLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "paragraph"));
+
+            Assert.True(topWithTallLead > topWithoutLead);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMarginRelativeFloatingImage_ShiftsTopWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithSmallMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "margin", marginTopTwips: 1200, verticalAlignment: null));
+            int topWithLargeMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "margin", marginTopTwips: 2600, verticalAlignment: null));
+
+            Assert.True(topWithLargeMargin > topWithSmallMargin);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImage_KeepsTopStableWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithSmallMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 1200, verticalAlignment: null));
+            int topWithLargeMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 2600, verticalAlignment: null));
+
+            Assert.Equal(topWithSmallMargin, topWithLargeMargin);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithLineParagraphAndPageRelativeFloatingImage_ProducesStableTopOrdering()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int lineTop = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "line", verticalAlignment: "bottom"));
+            int paragraphTop = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "paragraph", verticalAlignment: "bottom"));
+            int pageTopWithoutLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", verticalAlignment: "bottom"));
+            int pageTopWithLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "page", verticalAlignment: "bottom"));
+
+            Assert.True(lineTop <= paragraphTop);
+            Assert.Equal(pageTopWithoutLead, pageTopWithLead);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImageAndDistance_KeepsTopStableWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithSmallMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 1200, verticalAlignment: null, distanceTopTwips: 240));
+            int topWithLargeMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 2600, verticalAlignment: null, distanceTopTwips: 240));
+
+            Assert.Equal(topWithSmallMargin, topWithLargeMargin);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMarginRelativeFloatingImage_KeepsTopStableWithTallPrecedingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "margin", verticalAlignment: null));
+            int topWithTallLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "margin", verticalAlignment: null));
+
+            Assert.Equal(topWithoutLead, topWithTallLead);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImageAndDistance_KeepsTopStableWithTallPrecedingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", verticalAlignment: null, distanceTopTwips: 240));
+            int topWithTallLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "page", verticalAlignment: null, distanceTopTwips: 240));
+
+            Assert.Equal(topWithoutLead, topWithTallLead);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMarginRelativeFloatingImageAndDistance_ShiftsTopWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithSmallMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "margin", marginTopTwips: 1200, verticalAlignment: null, distanceTopTwips: 240));
+            int topWithLargeMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "margin", marginTopTwips: 2600, verticalAlignment: null, distanceTopTwips: 240));
+
+            Assert.True(topWithLargeMargin > topWithSmallMargin);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImage_DistanceExpandsBoundsIndependentlyOfMarginTop()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBoundsSmallMargin = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 1200, verticalAlignment: null));
+            var expandedBoundsSmallMargin = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 1200, verticalAlignment: null, distanceLeftTwips: 120, distanceTopTwips: 240, distanceRightTwips: 360, distanceBottomTwips: 480));
+
+            var baseBoundsLargeMargin = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 2600, verticalAlignment: null));
+            var expandedBoundsLargeMargin = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(addTallLeadParagraph: false, verticalRelativeTo: "page", marginTopTwips: 2600, verticalAlignment: null, distanceLeftTwips: 120, distanceTopTwips: 240, distanceRightTwips: 360, distanceBottomTwips: 480));
+
+            Assert.Equal(baseBoundsSmallMargin.left - 120, expandedBoundsSmallMargin.left);
+            Assert.Equal(baseBoundsSmallMargin.top - 240, expandedBoundsSmallMargin.top);
+            Assert.Equal(baseBoundsSmallMargin.right + 360, expandedBoundsSmallMargin.right);
+            Assert.Equal(baseBoundsSmallMargin.bottom + 480, expandedBoundsSmallMargin.bottom);
+
+            Assert.Equal(baseBoundsLargeMargin.left - 120, expandedBoundsLargeMargin.left);
+            Assert.Equal(baseBoundsLargeMargin.top - 240, expandedBoundsLargeMargin.top);
+            Assert.Equal(baseBoundsLargeMargin.right + 360, expandedBoundsLargeMargin.right);
+            Assert.Equal(baseBoundsLargeMargin.bottom + 480, expandedBoundsLargeMargin.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithLineRelativeFloatingImageAndDistance_ExpandsBoundsByDistance()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(addTallLeadParagraph: true, verticalRelativeTo: "line", verticalAlignment: null));
+            var expandedBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: true,
+                verticalRelativeTo: "line",
+                verticalAlignment: null,
+                distanceLeftTwips: 120,
+                distanceTopTwips: 240,
+                distanceRightTwips: 360,
+                distanceBottomTwips: 480));
+
+            Assert.Equal(baseBounds.left - 120, expandedBounds.left);
+            Assert.Equal(baseBounds.top - 240, expandedBounds.top);
+            Assert.Equal(baseBounds.right + 360, expandedBounds.right);
+            Assert.Equal(baseBounds.bottom + 480, expandedBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithLineRelativeFloatingImageAndDistance_ShiftsTopWithTallPrecedingContent()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "line",
+                verticalAlignment: null,
+                distanceTopTwips: 240));
+            int topWithLead = GetFirstFloatingImageTop(BuildAnchorStabilityModel(
+                addTallLeadParagraph: true,
+                verticalRelativeTo: "line",
+                verticalAlignment: null,
+                distanceTopTwips: 240));
+
+            Assert.True(topWithLead > topWithoutLead);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithLineRelativeFloatingImageAndDistance_ShiftsTopWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithSmallMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "line",
+                marginTopTwips: 1200,
+                verticalAlignment: null,
+                distanceTopTwips: 240));
+            int topWithLargeMargin = GetFirstFloatingImageTop(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "line",
+                marginTopTwips: 2600,
+                verticalAlignment: null,
+                distanceTopTwips: 240));
+
+            Assert.True(topWithLargeMargin > topWithSmallMargin);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithColumnRelativeHorizontalAnchor_UsesMarginRelativeEncodingAndPosition()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var marginModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "margin");
+            var columnModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "column");
+
+            int marginFlags = GetFloatingImageFlagsByIndex(marginModel, shapeCount: 1, shapeIndex: 0);
+            int columnFlags = GetFloatingImageFlagsByIndex(columnModel, shapeCount: 1, shapeIndex: 0);
+
+            var marginBounds = GetFirstFloatingImageBounds(marginModel);
+            var columnBounds = GetFirstFloatingImageBounds(columnModel);
+
+            Assert.Equal((marginFlags >> 7) & 0x03, (columnFlags >> 7) & 0x03);
+            Assert.Equal(1, (columnFlags >> 7) & 0x03);
+            Assert.Equal(marginBounds.left, columnBounds.left);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHorizontalRelativeToParagraph_UsesParagraphRelativeEncoding()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var paragraphModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "paragraph");
+            int flags = GetFloatingImageFlagsByIndex(paragraphModel, shapeCount: 1, shapeIndex: 0);
+
+            Assert.Equal(2, (flags >> 7) & 0x03);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithCharacterRelativeHorizontalAnchor_UsesParagraphRelativeEncodingBits()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var characterModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "character");
+            int flags = GetFloatingImageFlagsByIndex(characterModel, shapeCount: 1, shapeIndex: 0);
+
+            Assert.Equal(2, (flags >> 7) & 0x03);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithCharacterRelativeHorizontalAnchor_UsesMarginLikePositioning()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var marginModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "margin");
+            var characterModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "character");
+            var pageModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                horizontalRelativeTo: "page");
+
+            var marginBounds = GetFirstFloatingImageBounds(marginModel);
+            var characterBounds = GetFirstFloatingImageBounds(characterModel);
+            var pageBounds = GetFirstFloatingImageBounds(pageModel);
+
+            Assert.Equal(marginBounds.left, characterBounds.left);
+            Assert.True(characterBounds.left > pageBounds.left);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithVerticalRelativeToLine_UsesParagraphRelativeEncodingBits()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var lineModel = BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "line",
+                horizontalRelativeTo: "page");
+            int flags = GetFloatingImageFlagsByIndex(lineModel, shapeCount: 1, shapeIndex: 0);
+
+            Assert.Equal(2, (flags >> 5) & 0x03);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMultipleFloatingImages_KeepsFirstBoundsStableWhenAppendingSecondImage()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var singleImageModel = BuildMultipleFloatingImagesModel(includeSecondImage: false, secondImageDistanceTopTwips: 0);
+            var dualImageModel = BuildMultipleFloatingImagesModel(includeSecondImage: true, secondImageDistanceTopTwips: 480);
+
+            var firstBoundsInSingle = GetFloatingImageBoundsByIndex(singleImageModel, shapeCount: 1, shapeIndex: 0);
+            var firstBoundsInDual = GetFloatingImageBoundsByIndex(dualImageModel, shapeCount: 2, shapeIndex: 0);
+
+            Assert.Equal(firstBoundsInSingle.left, firstBoundsInDual.left);
+            Assert.Equal(firstBoundsInSingle.top, firstBoundsInDual.top);
+            Assert.Equal(firstBoundsInSingle.right, firstBoundsInDual.right);
+            Assert.Equal(firstBoundsInSingle.bottom, firstBoundsInDual.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMultipleFloatingImages_WritesShapeCpsInAscendingOrder()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var dualImageModel = BuildMultipleFloatingImagesModel(includeSecondImage: true, secondImageDistanceTopTwips: 480);
+
+            int firstCp = GetFloatingImageCpByIndex(dualImageModel, shapeIndex: 0);
+            int secondCp = GetFloatingImageCpByIndex(dualImageModel, shapeIndex: 1);
+
+            Assert.True(firstCp < secondCp);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTwoSections_PageRelativeHeaderFloatingImage_KeepsTopStableWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = BuildTwoSectionHeaderFloatingImageModel("page");
+            int firstSectionTop = GetHeaderFloatingImageTopByIndex(model, shapeCount: 2, shapeIndex: 0);
+            int secondSectionTop = GetHeaderFloatingImageTopByIndex(model, shapeCount: 2, shapeIndex: 1);
+
+            Assert.Equal(firstSectionTop, secondSectionTop);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTwoSections_MarginRelativeHeaderFloatingImage_ShiftsTopWhenMarginTopChanges()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = BuildTwoSectionHeaderFloatingImageModel("margin");
+            int firstSectionTop = GetHeaderFloatingImageTopByIndex(model, shapeCount: 2, shapeIndex: 0);
+            int secondSectionTop = GetHeaderFloatingImageTopByIndex(model, shapeCount: 2, shapeIndex: 1);
+
+            Assert.True(secondSectionTop > firstSectionTop);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMultipleFloatingImages_KeepsFirstFlagsStableWhenSecondImageUsesDifferentLayoutFlags()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var singleImageModel = BuildMultipleFloatingImagesModel(includeSecondImage: false, secondImageDistanceTopTwips: 0);
+            var dualImageModel = BuildMultipleFloatingImagesModel(
+                includeSecondImage: true,
+                secondImageDistanceTopTwips: 480,
+                secondImageWrapType: ImageWrapType.None,
+                secondImageBehindText: true,
+                secondImageAllowOverlap: true,
+                secondImageHorizontalRelativeTo: "page",
+                secondImageVerticalRelativeTo: "page");
+
+            int firstFlagsInSingle = GetFloatingImageFlagsByIndex(singleImageModel, shapeCount: 1, shapeIndex: 0);
+            int firstFlagsInDual = GetFloatingImageFlagsByIndex(dualImageModel, shapeCount: 2, shapeIndex: 0);
+
+            Assert.Equal(firstFlagsInSingle, firstFlagsInDual);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithMultipleFloatingImages_WritesDistinctFlagsForDistinctLayoutSettings()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var dualImageModel = BuildMultipleFloatingImagesModel(
+                includeSecondImage: true,
+                secondImageDistanceTopTwips: 480,
+                secondImageWrapType: ImageWrapType.None,
+                secondImageBehindText: true,
+                secondImageAllowOverlap: true,
+                secondImageHorizontalRelativeTo: "page",
+                secondImageVerticalRelativeTo: "page");
+
+            int firstFlags = GetFloatingImageFlagsByIndex(dualImageModel, shapeCount: 2, shapeIndex: 0);
+            int secondFlags = GetFloatingImageFlagsByIndex(dualImageModel, shapeCount: 2, shapeIndex: 1);
+
+            Assert.NotEqual(firstFlags, secondFlags);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithMarginRelativeFloatingImageOffsets_AnchorsOffsetsToMargins()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -2204,7 +2577,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var tableData = tableStream.GetData();
             int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
 
-            Assert.Equal(360, BitConverter.ToInt32(tableData, fcPlcfspaMom + 12));
+            Assert.Equal(1360, BitConverter.ToInt32(tableData, fcPlcfspaMom + 12));
             Assert.Equal(1740, BitConverter.ToInt32(tableData, fcPlcfspaMom + 16));
 
             int flags = BitConverter.ToInt32(tableData, fcPlcfspaMom + 30);
@@ -3251,6 +3624,362 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
 
             return BitConverter.ToInt32(tableData, fcPlcfspaMom + 16);
+        }
+
+        private static int GetFirstFloatingImageTop(DocumentModel model)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+
+            return BitConverter.ToInt32(tableData, fcPlcfspaMom + 16);
+        }
+
+        private static (int left, int top, int right, int bottom) GetFirstFloatingImageBounds(DocumentModel model)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+
+            return (
+                BitConverter.ToInt32(tableData, fcPlcfspaMom + 12),
+                BitConverter.ToInt32(tableData, fcPlcfspaMom + 16),
+                BitConverter.ToInt32(tableData, fcPlcfspaMom + 20),
+                BitConverter.ToInt32(tableData, fcPlcfspaMom + 24));
+        }
+
+        private static (int left, int top, int right, int bottom) GetFloatingImageBoundsByIndex(DocumentModel model, int shapeCount, int shapeIndex)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int firstRecordOffset = fcPlcfspaMom + ((shapeCount + 1) * 4);
+            int recordOffset = firstRecordOffset + (shapeIndex * 26);
+
+            return (
+                BitConverter.ToInt32(tableData, recordOffset + 4),
+                BitConverter.ToInt32(tableData, recordOffset + 8),
+                BitConverter.ToInt32(tableData, recordOffset + 12),
+                BitConverter.ToInt32(tableData, recordOffset + 16));
+        }
+
+        private static int GetFloatingImageCpByIndex(DocumentModel model, int shapeIndex)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            return BitConverter.ToInt32(tableData, fcPlcfspaMom + (shapeIndex * 4));
+        }
+
+        private static int GetFloatingImageFlagsByIndex(DocumentModel model, int shapeCount, int shapeIndex)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int firstRecordOffset = fcPlcfspaMom + ((shapeCount + 1) * 4);
+            int recordOffset = firstRecordOffset + (shapeIndex * 26);
+            return BitConverter.ToInt32(tableData, recordOffset + 22);
+        }
+
+        private static int GetHeaderFloatingImageTopByIndex(DocumentModel model, int shapeCount, int shapeIndex)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            int firstRecordOffset = fcPlcSpaHdr + ((shapeCount + 1) * 4);
+            int recordOffset = firstRecordOffset + (shapeIndex * 26);
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static DocumentModel BuildMultipleFloatingImagesModel(
+            bool includeSecondImage,
+            int secondImageDistanceTopTwips,
+            ImageWrapType secondImageWrapType = ImageWrapType.Square,
+            bool secondImageBehindText = false,
+            bool secondImageAllowOverlap = false,
+            string? secondImageHorizontalRelativeTo = null,
+            string? secondImageVerticalRelativeTo = "paragraph")
+        {
+            var model = new DocumentModel();
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = 1200,
+                MarginBottom = 1800
+            });
+
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "First anchor paragraph" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = new byte[]
+                            {
+                                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+                            },
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            BehindText = false,
+                            AllowOverlap = false,
+                            HorizontalRelativeTo = "margin",
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            if (includeSecondImage)
+            {
+                model.Content.Add(new ParagraphModel
+                {
+                    Runs =
+                    {
+                        new RunModel { Text = "Second anchor paragraph" },
+                        new RunModel
+                        {
+                            Image = new ImageModel
+                            {
+                                Data = new byte[]
+                                {
+                                    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                                    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+                                },
+                                ContentType = "image/png",
+                                Width = 80,
+                                Height = 40,
+                                LayoutType = ImageLayoutType.Floating,
+                                WrapType = secondImageWrapType,
+                                BehindText = secondImageBehindText,
+                                AllowOverlap = secondImageAllowOverlap,
+                                HorizontalRelativeTo = secondImageHorizontalRelativeTo,
+                                VerticalRelativeTo = secondImageVerticalRelativeTo,
+                                PositionYTwips = 200,
+                                DistanceTopTwips = secondImageDistanceTopTwips
+                            }
+                        }
+                    }
+                });
+            }
+
+            return model;
+        }
+
+        private static DocumentModel BuildTwoSectionHeaderFloatingImageModel(string verticalRelativeTo)
+        {
+            var firstHeader = new HeaderFooterStoryModel();
+            var firstHeaderParagraph = new ParagraphModel();
+            firstHeaderParagraph.Runs.Add(new RunModel { Text = "Header section one" });
+            firstHeaderParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = new byte[]
+                    {
+                        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+                    },
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 48,
+                    LayoutType = ImageLayoutType.Floating,
+                    VerticalRelativeTo = verticalRelativeTo,
+                    PositionYTwips = 0
+                }
+            });
+            firstHeader.Content.Add(firstHeaderParagraph);
+            firstHeader.Paragraphs.Add(firstHeaderParagraph);
+
+            var secondHeader = new HeaderFooterStoryModel();
+            var secondHeaderParagraph = new ParagraphModel();
+            secondHeaderParagraph.Runs.Add(new RunModel { Text = "Header section two" });
+            secondHeaderParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = new byte[]
+                    {
+                        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+                    },
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 48,
+                    LayoutType = ImageLayoutType.Floating,
+                    VerticalRelativeTo = verticalRelativeTo,
+                    PositionYTwips = 0
+                }
+            });
+            secondHeader.Content.Add(secondHeaderParagraph);
+            secondHeader.Paragraphs.Add(secondHeaderParagraph);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel { Runs = { new RunModel { Text = "Body section one" } } });
+            model.Content.Add(new ParagraphModel { Runs = { new RunModel { Text = "Body section two" } } });
+
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = 1200,
+                MarginBottom = 1800,
+                DefaultHeaderStory = firstHeader
+            });
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = 2600,
+                MarginBottom = 1800,
+                DefaultHeaderStory = secondHeader
+            });
+
+            return model;
+        }
+
+        private static DocumentModel BuildAnchorStabilityModel(
+            bool addTallLeadParagraph,
+            string verticalRelativeTo,
+            int marginTopTwips = 1200,
+            string? horizontalRelativeTo = "margin",
+            string? verticalAlignment = "top",
+            int distanceLeftTwips = 0,
+            int distanceTopTwips = 0,
+            int distanceRightTwips = 0,
+            int distanceBottomTwips = 0)
+        {
+            var model = new DocumentModel();
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = marginTopTwips,
+                MarginBottom = 1800
+            });
+
+            if (addTallLeadParagraph)
+            {
+                model.Content.Add(new ParagraphModel
+                {
+                    Runs =
+                    {
+                        new RunModel
+                        {
+                            Text = string.Join(" ", Enumerable.Repeat("Tall lead paragraph content for anchor stability checks.", 200)),
+                            Properties =
+                            {
+                                FontSize = 48
+                            }
+                        }
+                    }
+                });
+            }
+
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Anchor paragraph" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = new byte[]
+                            {
+                                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+                            },
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            HorizontalRelativeTo = horizontalRelativeTo,
+                            VerticalRelativeTo = verticalRelativeTo,
+                            VerticalAlignment = verticalAlignment,
+                            PositionYTwips = 360,
+                            DistanceLeftTwips = distanceLeftTwips,
+                            DistanceTopTwips = distanceTopTwips,
+                            DistanceRightTwips = distanceRightTwips,
+                            DistanceBottomTwips = distanceBottomTwips
+                        }
+                    }
+                }
+            });
+
+            return model;
         }
 
         [Fact]
