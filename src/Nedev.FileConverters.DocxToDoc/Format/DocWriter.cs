@@ -773,29 +773,43 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                 void AppendStructuredHeaderFooterTable(TableModel table, SectionModel? layoutSectionForStory, int tableAvailableWidthTwips, ref int verticalCursorTwips, ref int localStoryLength)
                 {
-                    foreach (var row in table.Rows)
+                    for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
                     {
+                        var row = table.Rows[rowIndex];
+                        var previousRow = rowIndex > 0 ? table.Rows[rowIndex - 1] : null;
+                        int totalColumnCount = ResolveTableTotalColumnCount(table, row);
                         int rowHeightTwips = 0;
                         int gridColumnIndex = 0;
                         var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int bottomOffsetTwips, int verticalOffsetTwips)>();
 
-                        foreach (var cell in row.Cells)
+                        for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
                         {
+                            var cell = row.Cells[cellIndex];
                             int gridSpan = Math.Max(1, cell.GridSpan);
+                            bool isFirstRow = rowIndex == 0;
+                            bool isLastRow = rowIndex == table.Rows.Count - 1;
+                            bool isFirstColumn = gridColumnIndex == 0;
+                            bool isLastColumn = gridColumnIndex + gridSpan >= totalColumnCount;
+                            var previousCell = cellIndex > 0 ? row.Cells[cellIndex - 1] : null;
                             int cellWidthTwips = cell.Width > 0
                                 ? cell.Width
                                 : ResolveTableCellWidth(table, gridColumnIndex, gridSpan, tableAvailableWidthTwips);
                             int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
                             int horizontalCellSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
-                            int cellAvailableWidthTwips = Math.Max(720, cellWidthTwips - horizontalCellPaddingTwips - horizontalCellSpacingTwips);
+                            int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, previousCell, isFirstColumn);
+                            int rightBorderTwips = ResolveTableCellRightBorderTwips(table, cell, isLastColumn);
+                            int topBorderTwips = ResolveTableCellTopBorderTwips(table, cell, previousRow, gridColumnIndex, gridSpan, isFirstRow);
+                            int bottomBorderTwips = ResolveTableCellBottomBorderTwips(table, cell, isLastRow);
+                            int horizontalCellBorderTwips = Math.Max(0, leftBorderTwips) + Math.Max(0, rightBorderTwips);
+                            int cellAvailableWidthTwips = Math.Max(720, cellWidthTwips - horizontalCellBorderTwips - horizontalCellPaddingTwips - horizontalCellSpacingTwips);
                             int cellContentHeightTwips = EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips);
                             int topPaddingTwips = ResolveTableCellTopPaddingTwips(table, cell);
                             int bottomPaddingTwips = ResolveTableCellBottomPaddingTwips(table, cell);
                             int topSpacingTwips = ResolveTableCellTopSpacingTwips(table);
                             int bottomSpacingTwips = ResolveTableCellBottomSpacingTwips(table);
-                            int cellTotalHeightTwips = topSpacingTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomSpacingTwips;
+                            int cellTotalHeightTwips = topSpacingTwips + topBorderTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomBorderTwips + bottomSpacingTwips;
                             rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
-                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topSpacingTwips + topPaddingTwips, bottomPaddingTwips + bottomSpacingTwips, 0));
+                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topSpacingTwips + topBorderTwips + topPaddingTwips, bottomPaddingTwips + bottomBorderTwips + bottomSpacingTwips, 0));
                             gridColumnIndex += gridSpan;
                         }
 
