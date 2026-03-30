@@ -327,6 +327,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         currentCell.VerticalAlignment = value switch
                         {
                             "center" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Center,
+                            "both" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Center,
                             "bottom" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Bottom,
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Top
                         };
@@ -1186,6 +1187,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         currentCell.VerticalAlignment = value switch
                         {
                             "center" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Center,
+                            "both" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Center,
                             "bottom" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Bottom,
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Top
                         };
