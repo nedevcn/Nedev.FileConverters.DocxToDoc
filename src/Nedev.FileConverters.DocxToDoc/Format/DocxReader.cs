@@ -254,6 +254,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             "pct" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct,
                             "auto" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto,
+                            "nil" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto,
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa
                         };
 
@@ -836,10 +837,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 currentRow != null &&
                                 currentRowHorizontalMergeAnchor != null)
                             {
-                                int mergedWidth = currentCell.Width;
-                                if (mergedWidth <= 0 && currentTable != null)
+                                int mergedWidth = 0;
+                                if (currentTable != null)
                                 {
                                     mergedWidth = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                }
+                                else if (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa)
+                                {
+                                    mergedWidth = currentCell.Width;
                                 }
 
                                 currentRowHorizontalMergeAnchor.GridSpan += Math.Max(1, currentCell.GridSpan);
@@ -1096,6 +1101,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             "pct" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct,
                             "auto" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto,
+                            "nil" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto,
                             _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa
                         };
 
@@ -1535,10 +1541,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 currentRow != null &&
                                 currentRowHorizontalMergeAnchor != null)
                             {
-                                int mergedWidth = currentCell.Width;
-                                if (mergedWidth <= 0 && currentTable != null)
+                                int mergedWidth = 0;
+                                if (currentTable != null)
                                 {
                                     mergedWidth = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
+                                }
+                                else if (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa)
+                                {
+                                    mergedWidth = currentCell.Width;
                                 }
 
                                 currentRowHorizontalMergeAnchor.GridSpan += Math.Max(1, currentCell.GridSpan);

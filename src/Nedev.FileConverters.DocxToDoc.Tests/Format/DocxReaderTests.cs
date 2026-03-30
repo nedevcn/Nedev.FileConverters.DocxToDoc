@@ -1504,7 +1504,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
-        public void ReadDocument_WithHorizontalMerge_CombinesContinueCellsIntoGridSpan()
+        public void ReadDocument_WithHorizontalMerge_CombinesContinueCellsIntoGridSpanUsingGridWidths()
         {
             using var ms = new MemoryStream();
             using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
@@ -1517,7 +1517,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                              "<w:tbl><w:tblGrid><w:gridCol w:w=\"1200\"/><w:gridCol w:w=\"1800\"/><w:gridCol w:w=\"900\"/></w:tblGrid>" +
                              "<w:tr>" +
                              "<w:tc><w:tcPr><w:hMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
-                             "<w:tc><w:tcPr><w:hMerge/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:tcPr><w:tcW w:w=\"2500\" w:type=\"pct\"/><w:hMerge/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>" +
                              "<w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc>" +
                              "</w:tr></w:tbl></w:body></w:document>");
             }
@@ -1762,6 +1762,31 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
             Assert.Equal(2500, table.PreferredWidthValue);
             Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct, table.PreferredWidthUnit);
+        }
+
+        [Fact]
+        public void ReadDocument_WithCellWidthNil_ParsesAsAutoWithoutNumericWidth()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tr><w:tc><w:tcPr><w:tcW w:type=\"nil\" w:w=\"2500\"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var cell = Assert.Single(Assert.Single(table.Rows).Cells);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto, cell.WidthUnit);
+            Assert.Equal(0, cell.Width);
         }
 
         [Fact]
