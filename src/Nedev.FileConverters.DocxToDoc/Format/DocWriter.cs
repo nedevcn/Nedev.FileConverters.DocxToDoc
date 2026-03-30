@@ -1626,6 +1626,45 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return sprms.ToArray();
         }
 
+        private static string NormalizeRelativeTo(string? relativeTo, bool isHorizontal)
+        {
+            if (string.IsNullOrWhiteSpace(relativeTo))
+            {
+                return "page";
+            }
+
+            string normalized = relativeTo.Trim().ToLowerInvariant();
+            normalized = string.Concat(normalized.Where(char.IsLetterOrDigit));
+            if (normalized == "paragraph")
+            {
+                return "paragraph";
+            }
+
+            if (isHorizontal && (normalized == "character" || normalized == "char"))
+            {
+                return "paragraph";
+            }
+
+            if (!isHorizontal && normalized == "line")
+            {
+                return "paragraph";
+            }
+
+            if (normalized == "margin"
+                || normalized == "column"
+                || normalized == "leftmargin"
+                || normalized == "rightmargin"
+                || normalized == "insidemargin"
+                || normalized == "outsidemargin"
+                || normalized == "topmargin"
+                || normalized == "bottommargin")
+            {
+                return "margin";
+            }
+
+            return "page";
+        }
+
         private static void AppendSecondaryStoryText(
             StringBuilder textBuilder,
             ref int currentCp,
@@ -3539,7 +3578,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             if (row.HeightTwips <= 0)
             {
-                return contentHeightTwips;
+                return Math.Max(276, contentHeightTwips);
             }
 
             return row.HeightRule switch
@@ -3918,12 +3957,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static int EncodeRelativeTo(string? relativeTo)
         {
-            if (string.Equals(relativeTo, "margin", StringComparison.OrdinalIgnoreCase))
+            string normalized = NormalizeRelativeTo(relativeTo, isHorizontal: true);
+            if (normalized == "page")
+            {
+                normalized = NormalizeRelativeTo(relativeTo, isHorizontal: false);
+            }
+
+            if (normalized == "margin")
             {
                 return 1;
             }
 
-            if (string.Equals(relativeTo, "paragraph", StringComparison.OrdinalIgnoreCase))
+            if (normalized == "paragraph")
             {
                 return 2;
             }
@@ -3943,7 +3988,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int paragraphStartTwips = 0,
             int paragraphExtentTwips = 0)
         {
-            if (string.Equals(relativeTo, "paragraph", StringComparison.OrdinalIgnoreCase))
+            string normalizedRelativeTo = NormalizeRelativeTo(relativeTo, isHorizontal);
+            if (normalizedRelativeTo == "paragraph")
             {
                 if (!isHorizontal && !string.IsNullOrWhiteSpace(alignment))
                 {
@@ -3960,7 +4006,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             if (!string.IsNullOrWhiteSpace(alignment))
             {
-                return ResolveAlignmentPositionTwips(alignment, relativeTo, sizeTwips, pageExtentTwips, leadingMarginTwips, trailingMarginTwips, isHorizontal);
+                return ResolveAlignmentPositionTwips(alignment, normalizedRelativeTo, sizeTwips, pageExtentTwips, leadingMarginTwips, trailingMarginTwips, isHorizontal);
+            }
+
+            if (normalizedRelativeTo == "margin")
+            {
+                return leadingMarginTwips + offsetTwips;
             }
 
             return offsetTwips;
