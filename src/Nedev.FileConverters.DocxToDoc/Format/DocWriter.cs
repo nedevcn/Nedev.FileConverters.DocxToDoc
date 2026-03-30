@@ -832,7 +832,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         tapSprms.AddRange(defTable);
 
                         tapxWriter.AddRow(rowMarkStart, currentCp, tapSprms.ToArray());
-                        verticalCursorTwips += Math.Max(276, rowHeightTwips);
+                        rowHeightTwips = ResolveRowHeightTwips(row, Math.Max(276, rowHeightTwips));
+                        verticalCursorTwips += rowHeightTwips;
                     }
                 }
 

@@ -1844,6 +1844,17 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithHeaderTableRowAtLeastHeight_ShiftsFollowingFloatingImageDown()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoRowHeight = GetHeaderFloatingImageTopWithTableRowHeight(0, TableRowHeightRule.Auto);
+            int topWithAtLeastHeight = GetHeaderFloatingImageTopWithTableRowHeight(2400, TableRowHeightRule.AtLeast);
+
+            Assert.True(topWithAtLeastHeight > topWithAutoRowHeight);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithEmptyStructuredHeaderStory_WritesGuardParagraphOnly()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -2268,6 +2279,74 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             story.Content.Add(table);
             story.Text = "Head\rCell";
             return story;
+        }
+
+        private static int GetHeaderFloatingImageTopWithTableRowHeight(int rowHeightTwips, TableRowHeightRule heightRule)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var lead = new ParagraphModel();
+            lead.Runs.Add(new RunModel { Text = "Lead" });
+            story.Content.Add(lead);
+            story.Paragraphs.Add(lead);
+
+            var table = new TableModel();
+            table.GridColumnWidths.Add(2400);
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+            var cell = new TableCellModel { Width = 2400 };
+            var cellParagraph = new ParagraphModel();
+            cellParagraph.Runs.Add(new RunModel { Text = "Cell" });
+            cell.Paragraphs.Add(cellParagraph);
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            story.Content.Add(table);
+
+            var tail = new ParagraphModel();
+            tail.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    VerticalRelativeTo = "paragraph",
+                    PositionYTwips = 0
+                }
+            });
+            story.Content.Add(tail);
+            story.Paragraphs.Add(tail);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
         }
 
         private static HeaderFooterStoryModel CreateStructuredHeaderFooterNestedCellStory(string leadText, string nestedCellText, string tailText)
