@@ -490,6 +490,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         if (int.TryParse(xmlReader.GetAttribute("w:val"), out int lvl))
                             currentParagraph.Properties.NumberingLevel = lvl;
                     }
+                    else if (localName == "pStyle" && currentParagraph != null)
+                    {
+                        string? paragraphStyleId = xmlReader.GetAttribute("w:val");
+                        if (!string.IsNullOrWhiteSpace(paragraphStyleId))
+                        {
+                            currentParagraph.Properties.ParagraphStyleId = paragraphStyleId;
+                        }
+                    }
                     else if (localName == "sectPr")
                     {
                         currentSection = new Nedev.FileConverters.DocxToDoc.Model.SectionModel();
@@ -607,6 +615,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentParagraph.Properties.PageBreakBefore = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                                     !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                    }
+                    else if (localName == "keepNext" && currentParagraph != null)
+                    {
+                        currentParagraph.Properties.KeepNext = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                                              !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                    }
+                    else if (localName == "keepLines" && currentParagraph != null)
+                    {
+                        currentParagraph.Properties.KeepLines = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                                               !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                    }
+                    else if (localName == "widowControl" && currentParagraph != null)
+                    {
+                        currentParagraph.Properties.WidowControl = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                                                   !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                    }
+                    else if (localName == "contextualSpacing" && currentParagraph != null)
+                    {
+                        currentParagraph.Properties.ContextualSpacing = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                                                        !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
                     }
                     else if (localName == "ins")
                     {
@@ -3380,6 +3408,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             using var reader = XmlReader.Create(stylesStream, new XmlReaderSettings { IgnoreWhitespace = true });
             Nedev.FileConverters.DocxToDoc.Model.StyleModel? currentStyle = null;
+            var basedOnByStyle = new Dictionary<Nedev.FileConverters.DocxToDoc.Model.StyleModel, string>();
+            var nextByStyle = new Dictionary<Nedev.FileConverters.DocxToDoc.Model.StyleModel, string>();
 
             while (reader.Read())
             {
@@ -3390,7 +3420,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         currentStyle = new Nedev.FileConverters.DocxToDoc.Model.StyleModel
                         {
                             Id = reader.GetAttribute("w:styleId") ?? string.Empty,
-                            IsParagraphStyle = reader.GetAttribute("w:type") == "paragraph"
+                            IsParagraphStyle = reader.GetAttribute("w:type") == "paragraph",
+                            StyleId = docModel.Styles.Count
                         };
                         docModel.Styles.Add(currentStyle);
                     }
@@ -3398,12 +3429,206 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentStyle.Name = reader.GetAttribute("w:val") ?? string.Empty;
                     }
+                    else if (reader.LocalName == "basedOn" && currentStyle != null)
+                    {
+                        string? basedOnId = reader.GetAttribute("w:val");
+                        if (!string.IsNullOrWhiteSpace(basedOnId))
+                        {
+                            basedOnByStyle[currentStyle] = basedOnId;
+                        }
+                    }
+                    else if (reader.LocalName == "next" && currentStyle != null)
+                    {
+                        string? nextId = reader.GetAttribute("w:val");
+                        if (!string.IsNullOrWhiteSpace(nextId))
+                        {
+                            nextByStyle[currentStyle] = nextId;
+                        }
+                    }
+                    else if (reader.LocalName == "pPr" && currentStyle != null)
+                    {
+                        currentStyle.ParagraphProps ??= new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties();
+                    }
+                    else if (reader.LocalName == "rPr" && currentStyle != null)
+                    {
+                        currentStyle.CharacterProps ??= new Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties();
+                    }
+                    else if (currentStyle?.ParagraphProps != null && TryApplyParagraphFormattingElement(reader, currentStyle.ParagraphProps))
+                    {
+                    }
+                    else if (currentStyle?.CharacterProps != null && TryApplyRunFormattingElement(reader, currentStyle.CharacterProps))
+                    {
+                    }
                 }
                 else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "style")
                 {
                     currentStyle = null;
                 }
             }
+
+            if (docModel.Styles.Count == 0)
+            {
+                return;
+            }
+
+            var styleIdToNumeric = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var style in docModel.Styles)
+            {
+                if (!string.IsNullOrWhiteSpace(style.Id))
+                {
+                    styleIdToNumeric[style.Id] = style.StyleId;
+                }
+            }
+
+            foreach (var style in docModel.Styles)
+            {
+                if (basedOnByStyle.TryGetValue(style, out string? basedOnId) &&
+                    styleIdToNumeric.TryGetValue(basedOnId, out int basedOnStyleId))
+                {
+                    style.BasedOn = basedOnStyleId;
+                }
+
+                if (nextByStyle.TryGetValue(style, out string? nextId) &&
+                    styleIdToNumeric.TryGetValue(nextId, out int nextStyleId))
+                {
+                    style.NextStyle = nextStyleId;
+                }
+            }
+        }
+
+        private static bool TryApplyParagraphFormattingElement(XmlReader reader, Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties properties)
+        {
+            string localName = reader.LocalName;
+            if (localName == "numId")
+            {
+                if (int.TryParse(reader.GetAttribute("w:val"), out int id))
+                {
+                    properties.NumberingId = id;
+                }
+
+                return true;
+            }
+
+            if (localName == "ilvl")
+            {
+                if (int.TryParse(reader.GetAttribute("w:val"), out int level))
+                {
+                    properties.NumberingLevel = level;
+                }
+
+                return true;
+            }
+
+            if (localName == "pStyle")
+            {
+                string? paragraphStyleId = reader.GetAttribute("w:val");
+                if (!string.IsNullOrWhiteSpace(paragraphStyleId))
+                {
+                    properties.ParagraphStyleId = paragraphStyleId;
+                }
+
+                return true;
+            }
+
+            if (localName == "jc")
+            {
+                string? value = reader.GetAttribute("w:val");
+                properties.Alignment = value switch
+                {
+                    "center" => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Center,
+                    "right" => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Right,
+                    "both" => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Both,
+                    _ => Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left
+                };
+                return true;
+            }
+
+            if (localName == "spacing")
+            {
+                if (int.TryParse(reader.GetAttribute("w:before"), out int before))
+                {
+                    properties.SpacingBeforeTwips = before;
+                }
+
+                if (int.TryParse(reader.GetAttribute("w:after"), out int after))
+                {
+                    properties.SpacingAfterTwips = after;
+                }
+
+                if (int.TryParse(reader.GetAttribute("w:line"), out int line))
+                {
+                    properties.LineSpacing = line;
+                }
+
+                string? lineRule = reader.GetAttribute("w:lineRule");
+                if (!string.IsNullOrWhiteSpace(lineRule))
+                {
+                    properties.LineSpacingRule = lineRule;
+                }
+
+                return true;
+            }
+
+            if (localName == "ind")
+            {
+                if (int.TryParse(reader.GetAttribute("w:left"), out int left))
+                {
+                    properties.LeftIndentTwips = left;
+                }
+
+                if (int.TryParse(reader.GetAttribute("w:right"), out int right))
+                {
+                    properties.RightIndentTwips = right;
+                }
+
+                if (int.TryParse(reader.GetAttribute("w:firstLine"), out int firstLine))
+                {
+                    properties.FirstLineIndentTwips = firstLine;
+                }
+                else if (int.TryParse(reader.GetAttribute("w:hanging"), out int hanging))
+                {
+                    properties.FirstLineIndentTwips = -hanging;
+                }
+
+                return true;
+            }
+
+            if (localName == "pageBreakBefore")
+            {
+                properties.PageBreakBefore = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                             !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+
+            if (localName == "keepNext")
+            {
+                properties.KeepNext = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                      !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+
+            if (localName == "keepLines")
+            {
+                properties.KeepLines = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                       !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+
+            if (localName == "widowControl")
+            {
+                properties.WidowControl = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                          !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+
+            if (localName == "contextualSpacing")
+            {
+                properties.ContextualSpacing = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                               !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+
+            return false;
         }
 
         private void ParseFonts(Stream fontStream, Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)

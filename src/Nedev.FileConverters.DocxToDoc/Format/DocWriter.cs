@@ -288,7 +288,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
-            void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips, int? maxVisibleCursorTwips = null)
+            void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips, int? maxVisibleCursorTwips = null, ParagraphModel? previousParagraph = null)
             {
                 int paraStart = currentCp;
                 if (para.Properties.PageBreakBefore && currentCp > 0)
@@ -298,9 +298,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(para, availableWidthTwips);
                 int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(para, paragraphAvailableWidthTwips);
                 bool isConstrainedLayout = maxVisibleCursorTwips.HasValue;
+                bool suppressContextualSpacing = ShouldSuppressContextualSpacing(para, previousParagraph);
                 int spacingBeforeTwips = isConstrainedLayout
-                    ? Math.Max(0, para.Properties.SpacingBeforeTwips)
-                    : para.Properties.SpacingBeforeTwips;
+                    ? Math.Max(0, suppressContextualSpacing ? 0 : para.Properties.SpacingBeforeTwips)
+                    : suppressContextualSpacing ? 0 : para.Properties.SpacingBeforeTwips;
                 int paragraphTopTwips = verticalCursorTwips + spacingBeforeTwips;
 
                 if (maxVisibleCursorTwips.HasValue)
@@ -699,6 +700,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             maxVisibleCursorTwipsForCell = Math.Min(maxVisibleCursorTwipsForCell, inheritedVisibleCursorTwips);
                         }
 
+                        ParagraphModel? previousCellParagraph = null;
                         foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
                         {
                             if (cellBlock is ParagraphModel cellParagraph)
@@ -707,7 +709,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                     cellParagraph,
                                     ref cellVerticalCursorTwips,
                                     cellLayout.availableWidthTwips,
-                                    row.HeightRule == TableRowHeightRule.Exact || maxVisibleCursorTwips.HasValue ? maxVisibleCursorTwipsForCell : null);
+                                    row.HeightRule == TableRowHeightRule.Exact || maxVisibleCursorTwips.HasValue ? maxVisibleCursorTwipsForCell : null,
+                                    previousCellParagraph);
+                                previousCellParagraph = cellParagraph;
                             }
                             else if (cellBlock is TableModel nestedTable)
                             {
@@ -717,6 +721,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 {
                                     cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwipsForCell);
                                 }
+                                previousCellParagraph = null;
                             }
                         }
 
@@ -753,15 +758,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
+            ParagraphModel? previousDocumentParagraph = null;
             foreach (var item in model.Content)
             {
                 if (item is ParagraphModel para)
                 {
-                    ProcessParagraph(para, ref paragraphVerticalCursorTwips, documentAvailableWidthTwips);
+                    ProcessParagraph(para, ref paragraphVerticalCursorTwips, documentAvailableWidthTwips, previousParagraph: previousDocumentParagraph);
+                    previousDocumentParagraph = para;
                 }
                 else if (item is TableModel table)
                 {
                     ProcessTable(table, ref paragraphVerticalCursorTwips, documentAvailableWidthTwips);
+                    previousDocumentParagraph = null;
                 }
             }
 
@@ -4554,6 +4562,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             AppendParagraphIndentSprms(sprms, props);
             AppendParagraphSpacingSprms(sprms, props);
+            AppendParagraphKeepSprms(sprms, props);
         }
 
         private static void AppendParagraphIndentSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
@@ -4611,6 +4620,56 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add((byte)(props.LineSpacing.Value & 0xFF));
                 sprms.Add((byte)((props.LineSpacing.Value >> 8) & 0xFF));
             }
+        }
+
+        private static void AppendParagraphKeepSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
+        {
+            if (props.KeepNext)
+            {
+                sprms.Add(0x05);
+                sprms.Add(0x24);
+                sprms.Add(1);
+            }
+
+            if (props.KeepLines)
+            {
+                sprms.Add(0x06);
+                sprms.Add(0x24);
+                sprms.Add(1);
+            }
+
+            if (props.WidowControl)
+            {
+                sprms.Add(0x07);
+                sprms.Add(0x24);
+                sprms.Add(1);
+            }
+
+            if (props.ContextualSpacing)
+            {
+                sprms.Add(0x44);
+                sprms.Add(0x24);
+                sprms.Add(1);
+            }
+        }
+
+        private static bool ShouldSuppressContextualSpacing(ParagraphModel currentParagraph, ParagraphModel? previousParagraph)
+        {
+            if (!currentParagraph.Properties.ContextualSpacing || previousParagraph == null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentParagraph.Properties.ParagraphStyleId) ||
+                string.IsNullOrWhiteSpace(previousParagraph.Properties.ParagraphStyleId))
+            {
+                return false;
+            }
+
+            return string.Equals(
+                currentParagraph.Properties.ParagraphStyleId,
+                previousParagraph.Properties.ParagraphStyleId,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private byte[] BuildChpxFromStyle(RunModel.CharacterProperties props, List<FontModel> fonts)

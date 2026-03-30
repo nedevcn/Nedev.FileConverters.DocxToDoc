@@ -175,6 +175,84 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x84, 0x10, 0xFF }));
         }
 
+        [Fact]
+        public void WriteDocBlocks_ParagraphKeepFlags_WritesKeepSprmsIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "KeepFlagsTest" });
+            para.Properties.KeepNext = true;
+            para.Properties.KeepLines = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x05, 0x24, 0x01 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x06, 0x24, 0x01 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphWidowControl_WritesWidowControlSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "WidowControlTest" });
+            para.Properties.WidowControl = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x07, 0x24, 0x01 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphContextualSpacing_WritesContextualSpacingSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "ContextSpacingTest" });
+            para.Properties.ContextualSpacing = true;
+            para.Properties.ParagraphStyleId = "Heading1";
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x44, 0x24, 0x01 }));
+        }
+
         private static bool ContainsSubsequence(byte[] buffer, byte[] subsequence)
         {
             if (subsequence.Length == 0 || buffer.Length < subsequence.Length)

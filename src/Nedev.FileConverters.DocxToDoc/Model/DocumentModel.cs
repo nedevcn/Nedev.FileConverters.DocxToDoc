@@ -284,10 +284,15 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public int LeftIndentTwips { get; set; }
             public int RightIndentTwips { get; set; }
             public int FirstLineIndentTwips { get; set; }
+            public string? ParagraphStyleId { get; set; }
             public int SpacingBeforeTwips { get; set; }
             public int SpacingAfterTwips { get; set; }
             public int? LineSpacing { get; set; }
             public string? LineSpacingRule { get; set; }
+            public bool KeepNext { get; set; }
+            public bool KeepLines { get; set; }
+            public bool ContextualSpacing { get; set; }
+            public bool WidowControl { get; set; }
             public bool PageBreakBefore { get; set; }
         }
 

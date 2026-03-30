@@ -394,6 +394,159 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithKeepNextAndKeepLines_ParsesParagraphProperties()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:p><w:pPr><w:keepNext/><w:keepLines/></w:pPr><w:r><w:t>A</w:t></w:r></w:p>" +
+                             "<w:p><w:pPr><w:keepNext w:val=\"false\"/><w:keepLines w:val=\"0\"/></w:pPr><w:r><w:t>B</w:t></w:r></w:p>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.True(model.Paragraphs[0].Properties.KeepNext);
+            Assert.True(model.Paragraphs[0].Properties.KeepLines);
+            Assert.False(model.Paragraphs[1].Properties.KeepNext);
+            Assert.False(model.Paragraphs[1].Properties.KeepLines);
+        }
+
+        [Fact]
+        public void ReadDocument_WithWidowControl_ParsesParagraphProperty()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:p><w:pPr><w:widowControl/></w:pPr><w:r><w:t>A</w:t></w:r></w:p>" +
+                             "<w:p><w:pPr><w:widowControl w:val=\"false\"/></w:pPr><w:r><w:t>B</w:t></w:r></w:p>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.True(model.Paragraphs[0].Properties.WidowControl);
+            Assert.False(model.Paragraphs[1].Properties.WidowControl);
+        }
+
+        [Fact]
+        public void ReadDocument_WithParagraphStyleAndContextualSpacing_ParsesParagraphProperties()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/><w:contextualSpacing/></w:pPr><w:r><w:t>A</w:t></w:r></w:p>" +
+                             "<w:p><w:pPr><w:pStyle w:val=\"Normal\"/><w:contextualSpacing w:val=\"false\"/></w:pPr><w:r><w:t>B</w:t></w:r></w:p>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            Assert.Equal("Heading1", model.Paragraphs[0].Properties.ParagraphStyleId);
+            Assert.True(model.Paragraphs[0].Properties.ContextualSpacing);
+            Assert.Equal("Normal", model.Paragraphs[1].Properties.ParagraphStyleId);
+            Assert.False(model.Paragraphs[1].Properties.ContextualSpacing);
+        }
+
+        [Fact]
+        public void ReadDocument_WithStyles_ParsesStyleIdsRelationsAndProperties()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:r><w:t>Styled</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Heading1\">" +
+                                 "<w:name w:val=\"Heading 1\"/>" +
+                                 "<w:basedOn w:val=\"Normal\"/>" +
+                                 "<w:next w:val=\"Normal\"/>" +
+                                 "<w:pPr><w:jc w:val=\"center\"/><w:pStyle w:val=\"Heading1\"/><w:keepNext/><w:keepLines/><w:widowControl/><w:contextualSpacing/><w:pageBreakBefore/><w:spacing w:before=\"120\" w:after=\"240\" w:line=\"360\" w:lineRule=\"auto\"/><w:ind w:left=\"720\" w:right=\"360\" w:firstLine=\"240\"/></w:pPr>" +
+                                 "<w:rPr><w:b/><w:i/><w:sz w:val=\"28\"/><w:rFonts w:ascii=\"Calibri\"/><w:color w:val=\"FF0000\"/></w:rPr>" +
+                                 "</w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(2, model.Styles.Count);
+            var normal = model.Styles[0];
+            var heading = model.Styles[1];
+
+            Assert.Equal("Normal", normal.Id);
+            Assert.Equal(0, normal.StyleId);
+
+            Assert.Equal("Heading1", heading.Id);
+            Assert.Equal(1, heading.StyleId);
+            Assert.Equal(normal.StyleId, heading.BasedOn);
+            Assert.Equal(normal.StyleId, heading.NextStyle);
+
+            Assert.NotNull(heading.ParagraphProps);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Center, heading.ParagraphProps!.Alignment);
+            Assert.True(heading.ParagraphProps.KeepNext);
+            Assert.True(heading.ParagraphProps.KeepLines);
+            Assert.True(heading.ParagraphProps.WidowControl);
+            Assert.True(heading.ParagraphProps.ContextualSpacing);
+            Assert.True(heading.ParagraphProps.PageBreakBefore);
+            Assert.Equal(120, heading.ParagraphProps.SpacingBeforeTwips);
+            Assert.Equal(240, heading.ParagraphProps.SpacingAfterTwips);
+            Assert.Equal(360, heading.ParagraphProps.LineSpacing);
+            Assert.Equal("auto", heading.ParagraphProps.LineSpacingRule);
+            Assert.Equal("Heading1", heading.ParagraphProps.ParagraphStyleId);
+            Assert.Equal(720, heading.ParagraphProps.LeftIndentTwips);
+            Assert.Equal(360, heading.ParagraphProps.RightIndentTwips);
+            Assert.Equal(240, heading.ParagraphProps.FirstLineIndentTwips);
+
+            Assert.NotNull(heading.CharacterProps);
+            Assert.True(heading.CharacterProps!.IsBold);
+            Assert.True(heading.CharacterProps.IsItalic);
+            Assert.Equal(28, heading.CharacterProps.FontSize);
+            Assert.Equal("Calibri", heading.CharacterProps.FontName);
+            Assert.Equal("FF0000", heading.CharacterProps.Color);
+        }
+
+        [Fact]
         public void ReadDocument_WithDrawingTextBoxContent_PreservesVisibleText()
         {
             using var ms = new MemoryStream();
