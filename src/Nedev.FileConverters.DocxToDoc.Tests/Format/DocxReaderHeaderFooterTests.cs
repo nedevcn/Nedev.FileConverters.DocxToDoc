@@ -79,6 +79,69 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithHeaderParagraphProperties_ParsesStructuredHeaderParagraphFormatting()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var documentStream = documentEntry.Open())
+                using (var writer = new StreamWriter(documentStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
+                                 "<w:body>" +
+                                 "<w:p><w:r><w:t>Body</w:t></w:r></w:p>" +
+                                 "<w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdHeader\"/></w:sectPr>" +
+                                 "</w:body>" +
+                                 "</w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdHeader\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header1.xml\" />" +
+                                 "</Relationships>");
+                }
+
+                var headerEntry = archive.CreateEntry("word/header1.xml");
+                using (var headerStream = headerEntry.Open())
+                using (var writer = new StreamWriter(headerStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/><w:keepNext/><w:keepLines/><w:widowControl/><w:contextualSpacing/><w:pageBreakBefore/></w:pPr><w:r><w:t>HeaderA</w:t></w:r></w:p>" +
+                                 "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/><w:contextualSpacing w:val=\"false\"/></w:pPr><w:r><w:t>HeaderB</w:t></w:r></w:p>" +
+                                 "</w:hdr>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var section = Assert.Single(model.Sections);
+            Assert.NotNull(section.DefaultHeaderStory);
+            var story = section.DefaultHeaderStory!;
+            Assert.Equal(2, story.Paragraphs.Count);
+
+            var firstParagraph = story.Paragraphs[0];
+            Assert.Equal("Heading1", firstParagraph.Properties.ParagraphStyleId);
+            Assert.True(firstParagraph.Properties.KeepNext);
+            Assert.True(firstParagraph.Properties.KeepLines);
+            Assert.True(firstParagraph.Properties.WidowControl);
+            Assert.True(firstParagraph.Properties.ContextualSpacing);
+            Assert.True(firstParagraph.Properties.PageBreakBefore);
+
+            var secondParagraph = story.Paragraphs[1];
+            Assert.Equal("Heading1", secondParagraph.Properties.ParagraphStyleId);
+            Assert.False(secondParagraph.Properties.ContextualSpacing);
+        }
+
+        [Fact]
         public void ReadDocument_WithoutDefaultHeaderFooterReferences_FallsBackToFirstAndEvenStories()
         {
             using var ms = new MemoryStream();

@@ -791,19 +791,24 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     return;
                 }
 
+                ParagraphModel? previousStoryParagraph = null;
                 foreach (var block in storyBlocks)
                 {
                     if (block is ParagraphModel paragraph)
                     {
                         int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, storyAvailableWidthTwips);
                         int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
-                        int paragraphTopTwips = storyVerticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
+                        bool suppressContextualSpacing = ShouldSuppressContextualSpacing(paragraph, previousStoryParagraph);
+                        int effectiveSpacingBeforeTwips = suppressContextualSpacing ? 0 : paragraph.Properties.SpacingBeforeTwips;
+                        int paragraphTopTwips = storyVerticalCursorTwips + effectiveSpacingBeforeTwips;
                         AppendStructuredHeaderFooterParagraph(paragraph, storySection, paragraphTopTwips, paragraphContentHeightTwips, ref storyLength, inTable: false, constrainToParagraphExtent: false);
-                        storyVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
+                        storyVerticalCursorTwips += effectiveSpacingBeforeTwips + paragraphContentHeightTwips + paragraph.Properties.SpacingAfterTwips;
+                        previousStoryParagraph = paragraph;
                     }
                     else if (block is TableModel table)
                     {
                         AppendStructuredHeaderFooterTable(table, storySection, storyAvailableWidthTwips, ref storyVerticalCursorTwips, ref storyLength);
+                        previousStoryParagraph = null;
                     }
                 }
 
@@ -873,13 +878,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 maxVisibleCursorTwips = Math.Min(maxVisibleCursorTwips, inheritedVisibleCursorTwips);
                             }
 
+                            ParagraphModel? previousCellParagraph = null;
                             foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
                             {
                                 if (cellBlock is ParagraphModel paragraph)
                                 {
                                     int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellLayout.availableWidthTwips);
                                     int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
-                                    int spacingBeforeTwips = Math.Max(0, paragraph.Properties.SpacingBeforeTwips);
+                                    bool suppressContextualSpacing = ShouldSuppressContextualSpacing(paragraph, previousCellParagraph);
+                                    int spacingBeforeTwips = Math.Max(0, suppressContextualSpacing ? 0 : paragraph.Properties.SpacingBeforeTwips);
                                     int paragraphTopTwips = verticalCursorTwips + cellVerticalCursorTwips + spacingBeforeTwips;
                                     int effectiveParagraphContentHeightTwips = paragraphContentHeightTwips;
                                     if (row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue)
@@ -895,6 +902,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                     {
                                         cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
                                     }
+                                    previousCellParagraph = paragraph;
                                 }
                                 else if (cellBlock is TableModel nestedTable)
                                 {
@@ -911,6 +919,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                     {
                                         cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
                                     }
+                                    previousCellParagraph = null;
                                 }
                             }
 

@@ -290,10 +290,15 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public int? LineSpacing { get; set; }
             public string? LineSpacingRule { get; set; }
             public bool KeepNext { get; set; }
+            public bool KeepNextSpecified { get; set; }
             public bool KeepLines { get; set; }
+            public bool KeepLinesSpecified { get; set; }
             public bool ContextualSpacing { get; set; }
+            public bool ContextualSpacingSpecified { get; set; }
             public bool WidowControl { get; set; }
+            public bool WidowControlSpecified { get; set; }
             public bool PageBreakBefore { get; set; }
+            public bool PageBreakBeforeSpecified { get; set; }
         }
 
         public enum Justification
@@ -315,13 +320,19 @@ namespace Nedev.FileConverters.DocxToDoc.Model
 
         public class CharacterProperties
         {
+            public string? CharacterStyleId { get; set; }
             public bool IsBold { get; set; }
+            public bool IsBoldSpecified { get; set; }
             public bool IsItalic { get; set; }
+            public bool IsItalicSpecified { get; set; }
             public bool IsStrike { get; set; }
+            public bool IsStrikeSpecified { get; set; }
             public int? FontSize { get; set; } // In half-points (e.g., 24 = 12pt)
             public string? FontName { get; set; }
             public UnderlineType Underline { get; set; } = UnderlineType.None;
+            public bool UnderlineSpecified { get; set; }
             public string? Color { get; set; } // Hex color like "FF0000"
+            public bool ColorSpecified { get; set; }
         }
     }
 

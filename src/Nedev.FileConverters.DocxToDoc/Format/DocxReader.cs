@@ -615,26 +615,31 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         currentParagraph.Properties.PageBreakBefore = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                                     !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                        currentParagraph.Properties.PageBreakBeforeSpecified = true;
                     }
                     else if (localName == "keepNext" && currentParagraph != null)
                     {
                         currentParagraph.Properties.KeepNext = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                               !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                        currentParagraph.Properties.KeepNextSpecified = true;
                     }
                     else if (localName == "keepLines" && currentParagraph != null)
                     {
                         currentParagraph.Properties.KeepLines = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                                !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                        currentParagraph.Properties.KeepLinesSpecified = true;
                     }
                     else if (localName == "widowControl" && currentParagraph != null)
                     {
                         currentParagraph.Properties.WidowControl = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                                    !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                        currentParagraph.Properties.WidowControlSpecified = true;
                     }
                     else if (localName == "contextualSpacing" && currentParagraph != null)
                     {
                         currentParagraph.Properties.ContextualSpacing = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                                         !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                        currentParagraph.Properties.ContextualSpacingSpecified = true;
                     }
                     else if (localName == "ins")
                     {
@@ -970,8 +975,361 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             ParseEndnoteReferences(docModel);
             ParseCommentRanges(docModel);
             ParseSectionHeaderFooterStories(docModel);
+            ApplyParagraphStyleProperties(docModel);
+            ApplyCharacterStyleProperties(docModel);
 
             return docModel;
+        }
+
+        private void ApplyParagraphStyleProperties(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            if (docModel.Styles.Count == 0)
+            {
+                return;
+            }
+
+            var stylesById = new Dictionary<string, Nedev.FileConverters.DocxToDoc.Model.StyleModel>(StringComparer.OrdinalIgnoreCase);
+            var stylesByStyleId = new Dictionary<int, Nedev.FileConverters.DocxToDoc.Model.StyleModel>();
+            foreach (var style in docModel.Styles)
+            {
+                stylesByStyleId[style.StyleId] = style;
+                if (!string.IsNullOrWhiteSpace(style.Id))
+                {
+                    stylesById[style.Id] = style;
+                }
+            }
+
+            var effectiveCache = new Dictionary<int, Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties>();
+            foreach (var paragraph in EnumerateAllParagraphs(docModel))
+            {
+                string? paragraphStyleId = paragraph.Properties.ParagraphStyleId;
+                if (string.IsNullOrWhiteSpace(paragraphStyleId))
+                {
+                    continue;
+                }
+
+                if (!stylesById.TryGetValue(paragraphStyleId, out var style))
+                {
+                    continue;
+                }
+
+                var effectiveStyleProps = ResolveEffectiveStyleParagraphProperties(style, stylesByStyleId, effectiveCache, new HashSet<int>());
+                MergeParagraphPropertiesFromStyle(paragraph.Properties, effectiveStyleProps);
+            }
+        }
+
+        private static IEnumerable<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel> EnumerateAllParagraphs(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            foreach (var block in docModel.Content)
+            {
+                foreach (var paragraph in EnumerateParagraphsFromBlock(block))
+                {
+                    yield return paragraph;
+                }
+            }
+
+            foreach (var section in docModel.Sections)
+            {
+                foreach (var story in EnumerateSectionStories(section))
+                {
+                    foreach (var paragraph in EnumerateParagraphsFromStory(story))
+                    {
+                        yield return paragraph;
+                    }
+                }
+            }
+        }
+
+        private static IEnumerable<Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel> EnumerateSectionStories(Nedev.FileConverters.DocxToDoc.Model.SectionModel section)
+        {
+            if (section.DefaultHeaderStory != null) yield return section.DefaultHeaderStory;
+            if (section.DefaultFooterStory != null) yield return section.DefaultFooterStory;
+            if (section.FirstPageHeaderStory != null) yield return section.FirstPageHeaderStory;
+            if (section.FirstPageFooterStory != null) yield return section.FirstPageFooterStory;
+            if (section.EvenPagesHeaderStory != null) yield return section.EvenPagesHeaderStory;
+            if (section.EvenPagesFooterStory != null) yield return section.EvenPagesFooterStory;
+        }
+
+        private static IEnumerable<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel> EnumerateParagraphsFromStory(Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel story)
+        {
+            IReadOnlyList<object> blocks = story.Content.Count > 0
+                ? story.Content
+                : story.Paragraphs.ConvertAll(static p => (object)p);
+
+            foreach (var block in blocks)
+            {
+                foreach (var paragraph in EnumerateParagraphsFromBlock(block))
+                {
+                    yield return paragraph;
+                }
+            }
+        }
+
+        private static IEnumerable<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel> EnumerateParagraphsFromBlock(object block)
+        {
+            if (block is Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph)
+            {
+                yield return paragraph;
+                yield break;
+            }
+
+            if (block is Nedev.FileConverters.DocxToDoc.Model.TableModel table)
+            {
+                foreach (var row in table.Rows)
+                {
+                    foreach (var cell in row.Cells)
+                    {
+                        foreach (var cellBlock in cell.Content)
+                        {
+                            foreach (var nestedParagraph in EnumerateParagraphsFromBlock(cellBlock))
+                            {
+                                yield return nestedParagraph;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties ResolveEffectiveStyleParagraphProperties(
+            Nedev.FileConverters.DocxToDoc.Model.StyleModel style,
+            IReadOnlyDictionary<int, Nedev.FileConverters.DocxToDoc.Model.StyleModel> stylesByStyleId,
+            IDictionary<int, Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties> cache,
+            ISet<int> visiting)
+        {
+            if (cache.TryGetValue(style.StyleId, out var cached))
+            {
+                return CloneParagraphProperties(cached);
+            }
+
+            if (!visiting.Add(style.StyleId))
+            {
+                return style.ParagraphProps != null
+                    ? CloneParagraphProperties(style.ParagraphProps)
+                    : new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties();
+            }
+
+            var resolved = new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties();
+            if (style.BasedOn.HasValue && stylesByStyleId.TryGetValue(style.BasedOn.Value, out var parentStyle))
+            {
+                var parentResolved = ResolveEffectiveStyleParagraphProperties(parentStyle, stylesByStyleId, cache, visiting);
+                ApplyMeaningfulStyleProperties(resolved, parentResolved);
+            }
+
+            if (style.ParagraphProps != null)
+            {
+                ApplyMeaningfulStyleProperties(resolved, style.ParagraphProps);
+            }
+
+            visiting.Remove(style.StyleId);
+            cache[style.StyleId] = CloneParagraphProperties(resolved);
+            return resolved;
+        }
+
+        private static void ApplyMeaningfulStyleProperties(
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties target,
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties source)
+        {
+            if (source.Alignment != Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left)
+            {
+                target.Alignment = source.Alignment;
+            }
+
+            if (source.NumberingId.HasValue)
+            {
+                target.NumberingId = source.NumberingId;
+            }
+
+            if (source.NumberingLevel.HasValue)
+            {
+                target.NumberingLevel = source.NumberingLevel;
+            }
+
+            if (source.LeftIndentTwips != 0)
+            {
+                target.LeftIndentTwips = source.LeftIndentTwips;
+            }
+
+            if (source.RightIndentTwips != 0)
+            {
+                target.RightIndentTwips = source.RightIndentTwips;
+            }
+
+            if (source.FirstLineIndentTwips != 0)
+            {
+                target.FirstLineIndentTwips = source.FirstLineIndentTwips;
+            }
+
+            if (!string.IsNullOrWhiteSpace(source.ParagraphStyleId))
+            {
+                target.ParagraphStyleId = source.ParagraphStyleId;
+            }
+
+            if (source.SpacingBeforeTwips != 0)
+            {
+                target.SpacingBeforeTwips = source.SpacingBeforeTwips;
+            }
+
+            if (source.SpacingAfterTwips != 0)
+            {
+                target.SpacingAfterTwips = source.SpacingAfterTwips;
+            }
+
+            if (source.LineSpacing.HasValue)
+            {
+                target.LineSpacing = source.LineSpacing;
+            }
+
+            if (!string.IsNullOrWhiteSpace(source.LineSpacingRule))
+            {
+                target.LineSpacingRule = source.LineSpacingRule;
+            }
+
+            if (source.KeepNextSpecified)
+            {
+                target.KeepNext = source.KeepNext;
+                target.KeepNextSpecified = true;
+            }
+
+            if (source.KeepLinesSpecified)
+            {
+                target.KeepLines = source.KeepLines;
+                target.KeepLinesSpecified = true;
+            }
+
+            if (source.ContextualSpacingSpecified)
+            {
+                target.ContextualSpacing = source.ContextualSpacing;
+                target.ContextualSpacingSpecified = true;
+            }
+
+            if (source.WidowControlSpecified)
+            {
+                target.WidowControl = source.WidowControl;
+                target.WidowControlSpecified = true;
+            }
+
+            if (source.PageBreakBeforeSpecified)
+            {
+                target.PageBreakBefore = source.PageBreakBefore;
+                target.PageBreakBeforeSpecified = true;
+            }
+        }
+
+        private static void MergeParagraphPropertiesFromStyle(
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties destination,
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties styleProps)
+        {
+            if (destination.Alignment == Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left &&
+                styleProps.Alignment != Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.Justification.Left)
+            {
+                destination.Alignment = styleProps.Alignment;
+            }
+
+            if (!destination.NumberingId.HasValue && styleProps.NumberingId.HasValue)
+            {
+                destination.NumberingId = styleProps.NumberingId;
+            }
+
+            if (!destination.NumberingLevel.HasValue && styleProps.NumberingLevel.HasValue)
+            {
+                destination.NumberingLevel = styleProps.NumberingLevel;
+            }
+
+            if (destination.LeftIndentTwips == 0 && styleProps.LeftIndentTwips != 0)
+            {
+                destination.LeftIndentTwips = styleProps.LeftIndentTwips;
+            }
+
+            if (destination.RightIndentTwips == 0 && styleProps.RightIndentTwips != 0)
+            {
+                destination.RightIndentTwips = styleProps.RightIndentTwips;
+            }
+
+            if (destination.FirstLineIndentTwips == 0 && styleProps.FirstLineIndentTwips != 0)
+            {
+                destination.FirstLineIndentTwips = styleProps.FirstLineIndentTwips;
+            }
+
+            if (destination.SpacingBeforeTwips == 0 && styleProps.SpacingBeforeTwips != 0)
+            {
+                destination.SpacingBeforeTwips = styleProps.SpacingBeforeTwips;
+            }
+
+            if (destination.SpacingAfterTwips == 0 && styleProps.SpacingAfterTwips != 0)
+            {
+                destination.SpacingAfterTwips = styleProps.SpacingAfterTwips;
+            }
+
+            if (!destination.LineSpacing.HasValue && styleProps.LineSpacing.HasValue)
+            {
+                destination.LineSpacing = styleProps.LineSpacing;
+            }
+
+            if (string.IsNullOrWhiteSpace(destination.LineSpacingRule) && !string.IsNullOrWhiteSpace(styleProps.LineSpacingRule))
+            {
+                destination.LineSpacingRule = styleProps.LineSpacingRule;
+            }
+
+            if (!destination.KeepNextSpecified && styleProps.KeepNextSpecified)
+            {
+                destination.KeepNext = styleProps.KeepNext;
+                destination.KeepNextSpecified = true;
+            }
+
+            if (!destination.KeepLinesSpecified && styleProps.KeepLinesSpecified)
+            {
+                destination.KeepLines = styleProps.KeepLines;
+                destination.KeepLinesSpecified = true;
+            }
+
+            if (!destination.ContextualSpacingSpecified && styleProps.ContextualSpacingSpecified)
+            {
+                destination.ContextualSpacing = styleProps.ContextualSpacing;
+                destination.ContextualSpacingSpecified = true;
+            }
+
+            if (!destination.WidowControlSpecified && styleProps.WidowControlSpecified)
+            {
+                destination.WidowControl = styleProps.WidowControl;
+                destination.WidowControlSpecified = true;
+            }
+
+            if (!destination.PageBreakBeforeSpecified && styleProps.PageBreakBeforeSpecified)
+            {
+                destination.PageBreakBefore = styleProps.PageBreakBefore;
+                destination.PageBreakBeforeSpecified = true;
+            }
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties CloneParagraphProperties(
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties source)
+        {
+            return new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel.ParagraphProperties
+            {
+                Alignment = source.Alignment,
+                NumberingId = source.NumberingId,
+                NumberingLevel = source.NumberingLevel,
+                LeftIndentTwips = source.LeftIndentTwips,
+                RightIndentTwips = source.RightIndentTwips,
+                FirstLineIndentTwips = source.FirstLineIndentTwips,
+                ParagraphStyleId = source.ParagraphStyleId,
+                SpacingBeforeTwips = source.SpacingBeforeTwips,
+                SpacingAfterTwips = source.SpacingAfterTwips,
+                LineSpacing = source.LineSpacing,
+                LineSpacingRule = source.LineSpacingRule,
+                KeepNext = source.KeepNext,
+                KeepNextSpecified = source.KeepNextSpecified,
+                KeepLines = source.KeepLines,
+                KeepLinesSpecified = source.KeepLinesSpecified,
+                ContextualSpacing = source.ContextualSpacing,
+                ContextualSpacingSpecified = source.ContextualSpacingSpecified,
+                WidowControl = source.WidowControl,
+                WidowControlSpecified = source.WidowControlSpecified,
+                PageBreakBefore = source.PageBreakBefore
+                ,
+                PageBreakBeforeSpecified = source.PageBreakBeforeSpecified
+            };
         }
 
         private void ParseSectionHeaderFooterStories(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
@@ -1394,6 +1752,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             TryApplyRunFormattingElement(reader, currentRunBaseProperties);
                         }
+                    }
+                    else if (currentParagraph != null && TryApplyParagraphFormattingElement(reader, currentParagraph.Properties))
+                    {
                     }
                     else if (localName == "hyperlink" && currentParagraph != null)
                     {
@@ -2795,12 +3156,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties source,
             Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties target)
         {
+            target.CharacterStyleId = source.CharacterStyleId;
             target.IsBold = source.IsBold;
+            target.IsBoldSpecified = source.IsBoldSpecified;
             target.IsItalic = source.IsItalic;
+            target.IsItalicSpecified = source.IsItalicSpecified;
             target.IsStrike = source.IsStrike;
+            target.IsStrikeSpecified = source.IsStrikeSpecified;
             target.FontSize = source.FontSize;
             target.FontName = source.FontName;
             target.Underline = source.Underline;
+            target.UnderlineSpecified = source.UnderlineSpecified;
             target.Color = source.Color;
         }
 
@@ -2813,23 +3179,36 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             switch (reader.LocalName)
             {
+                case "rStyle":
+                    string? characterStyleId = reader.GetAttribute("w:val");
+                    if (!string.IsNullOrWhiteSpace(characterStyleId))
+                    {
+                        properties.CharacterStyleId = characterStyleId;
+                    }
+                    return true;
                 case "b":
                     properties.IsBold = !IsFalseValue(reader.GetAttribute("w:val"));
+                    properties.IsBoldSpecified = true;
                     return true;
                 case "bCs":
                     properties.IsBold = !IsFalseValue(reader.GetAttribute("w:val"));
+                    properties.IsBoldSpecified = true;
                     return true;
                 case "i":
                     properties.IsItalic = !IsFalseValue(reader.GetAttribute("w:val"));
+                    properties.IsItalicSpecified = true;
                     return true;
                 case "iCs":
                     properties.IsItalic = !IsFalseValue(reader.GetAttribute("w:val"));
+                    properties.IsItalicSpecified = true;
                     return true;
                 case "strike":
                     properties.IsStrike = !IsFalseValue(reader.GetAttribute("w:val"));
+                    properties.IsStrikeSpecified = true;
                     return true;
                 case "dstrike":
                     properties.IsStrike = !IsFalseValue(reader.GetAttribute("w:val"));
+                    properties.IsStrikeSpecified = true;
                     return true;
                 case "u":
                     string underlineValue = reader.GetAttribute("w:val") ?? "none";
@@ -2853,6 +3232,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         "wave" => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.Wave,
                         _ => Nedev.FileConverters.DocxToDoc.Model.UnderlineType.None
                     };
+                    properties.UnderlineSpecified = true;
                     return true;
                 case "color":
                     string? colorValue = reader.GetAttribute("w:val");
@@ -2886,6 +3266,157 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 default:
                     return false;
             }
+        }
+
+        private void ApplyCharacterStyleProperties(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            if (docModel.Styles.Count == 0)
+            {
+                return;
+            }
+
+            var stylesById = new Dictionary<string, Nedev.FileConverters.DocxToDoc.Model.StyleModel>(StringComparer.OrdinalIgnoreCase);
+            var stylesByStyleId = new Dictionary<int, Nedev.FileConverters.DocxToDoc.Model.StyleModel>();
+            foreach (var style in docModel.Styles)
+            {
+                stylesByStyleId[style.StyleId] = style;
+                if (!string.IsNullOrWhiteSpace(style.Id))
+                {
+                    stylesById[style.Id] = style;
+                }
+            }
+
+            var effectiveCache = new Dictionary<int, Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties>();
+            foreach (var paragraph in EnumerateAllParagraphs(docModel))
+            {
+                Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties? paragraphStyleCharacterProps = null;
+                string? paragraphStyleId = paragraph.Properties.ParagraphStyleId;
+                if (!string.IsNullOrWhiteSpace(paragraphStyleId) &&
+                    stylesById.TryGetValue(paragraphStyleId, out var paragraphStyle))
+                {
+                    paragraphStyleCharacterProps = ResolveEffectiveStyleCharacterProperties(paragraphStyle, stylesByStyleId, effectiveCache, new HashSet<int>());
+                }
+
+                foreach (var run in paragraph.Runs)
+                {
+                    if (paragraphStyleCharacterProps != null)
+                    {
+                        MergeCharacterPropertiesFromStyle(run.Properties, paragraphStyleCharacterProps);
+                    }
+
+                    string? characterStyleId = run.Properties.CharacterStyleId;
+                    if (!string.IsNullOrWhiteSpace(characterStyleId) &&
+                        stylesById.TryGetValue(characterStyleId, out var runStyle))
+                    {
+                        var effectiveRunStyleProps = ResolveEffectiveStyleCharacterProperties(runStyle, stylesByStyleId, effectiveCache, new HashSet<int>());
+                        MergeCharacterPropertiesFromStyle(run.Properties, effectiveRunStyleProps);
+                    }
+                }
+            }
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties ResolveEffectiveStyleCharacterProperties(
+            Nedev.FileConverters.DocxToDoc.Model.StyleModel style,
+            IReadOnlyDictionary<int, Nedev.FileConverters.DocxToDoc.Model.StyleModel> stylesByStyleId,
+            IDictionary<int, Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties> cache,
+            ISet<int> visiting)
+        {
+            if (cache.TryGetValue(style.StyleId, out var cached))
+            {
+                return CloneCharacterProperties(cached);
+            }
+
+            if (!visiting.Add(style.StyleId))
+            {
+                return style.CharacterProps != null
+                    ? CloneCharacterProperties(style.CharacterProps)
+                    : new Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties();
+            }
+
+            var resolved = new Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties();
+            if (style.BasedOn.HasValue && stylesByStyleId.TryGetValue(style.BasedOn.Value, out var parentStyle))
+            {
+                var parentResolved = ResolveEffectiveStyleCharacterProperties(parentStyle, stylesByStyleId, cache, visiting);
+                ApplyMeaningfulCharacterStyleProperties(resolved, parentResolved);
+            }
+
+            if (style.CharacterProps != null)
+            {
+                ApplyMeaningfulCharacterStyleProperties(resolved, style.CharacterProps);
+            }
+
+            visiting.Remove(style.StyleId);
+            cache[style.StyleId] = CloneCharacterProperties(resolved);
+            return resolved;
+        }
+
+        private static void ApplyMeaningfulCharacterStyleProperties(
+            Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties target,
+            Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties source)
+        {
+            if (!string.IsNullOrWhiteSpace(source.CharacterStyleId))
+            {
+                target.CharacterStyleId = source.CharacterStyleId;
+            }
+
+            if (source.IsBoldSpecified)
+            {
+                target.IsBold = source.IsBold;
+                target.IsBoldSpecified = true;
+            }
+
+            if (source.IsItalicSpecified)
+            {
+                target.IsItalic = source.IsItalic;
+                target.IsItalicSpecified = true;
+            }
+
+            if (source.IsStrikeSpecified)
+            {
+                target.IsStrike = source.IsStrike;
+                target.IsStrikeSpecified = true;
+            }
+
+            if (source.FontSize.HasValue) target.FontSize = source.FontSize;
+            if (!string.IsNullOrWhiteSpace(source.FontName)) target.FontName = source.FontName;
+            if (source.UnderlineSpecified)
+            {
+                target.Underline = source.Underline;
+                target.UnderlineSpecified = true;
+            }
+            if (!string.IsNullOrWhiteSpace(source.Color)) target.Color = source.Color;
+        }
+
+        private static void MergeCharacterPropertiesFromStyle(
+            Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties destination,
+            Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties styleProps)
+        {
+            if (!destination.IsBoldSpecified && styleProps.IsBoldSpecified)
+            {
+                destination.IsBold = styleProps.IsBold;
+                destination.IsBoldSpecified = true;
+            }
+
+            if (!destination.IsItalicSpecified && styleProps.IsItalicSpecified)
+            {
+                destination.IsItalic = styleProps.IsItalic;
+                destination.IsItalicSpecified = true;
+            }
+
+            if (!destination.IsStrikeSpecified && styleProps.IsStrikeSpecified)
+            {
+                destination.IsStrike = styleProps.IsStrike;
+                destination.IsStrikeSpecified = true;
+            }
+
+            if (!destination.FontSize.HasValue && styleProps.FontSize.HasValue) destination.FontSize = styleProps.FontSize;
+            if (string.IsNullOrWhiteSpace(destination.FontName) && !string.IsNullOrWhiteSpace(styleProps.FontName)) destination.FontName = styleProps.FontName;
+            if (!destination.UnderlineSpecified && styleProps.UnderlineSpecified)
+            {
+                destination.Underline = styleProps.Underline;
+                destination.UnderlineSpecified = true;
+            }
+            if (string.IsNullOrWhiteSpace(destination.Color) && !string.IsNullOrWhiteSpace(styleProps.Color)) destination.Color = styleProps.Color;
         }
 
         private static string ReadRunTextFragment(XmlReader reader)
@@ -3597,6 +4128,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 properties.PageBreakBefore = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                              !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                properties.PageBreakBeforeSpecified = true;
                 return true;
             }
 
@@ -3604,6 +4136,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 properties.KeepNext = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                       !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                properties.KeepNextSpecified = true;
                 return true;
             }
 
@@ -3611,6 +4144,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 properties.KeepLines = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                        !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                properties.KeepLinesSpecified = true;
                 return true;
             }
 
@@ -3618,6 +4152,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 properties.WidowControl = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                           !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                properties.WidowControlSpecified = true;
                 return true;
             }
 
@@ -3625,6 +4160,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 properties.ContextualSpacing = !string.Equals(reader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
                                                !string.Equals(reader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                properties.ContextualSpacingSpecified = true;
                 return true;
             }
 
