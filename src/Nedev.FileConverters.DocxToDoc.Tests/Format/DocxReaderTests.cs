@@ -1733,7 +1733,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
-        public void ReadDocument_WithVerticalMerge_ParsesRestartAndContinue()
+        public void ReadDocument_WithVerticalMerge_ParsesRestartContinueAndExplicitNone()
         {
             using var ms = new MemoryStream();
             using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
@@ -1746,6 +1746,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                              "<w:tbl>" +
                              "<w:tr><w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr>" +
                              "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc></w:tr>" +
+                             "<w:tr><w:tc><w:tcPr><w:vMerge w:val=\"false\"/></w:tcPr><w:p><w:r><w:t>A3</w:t></w:r></w:p></w:tc></w:tr>" +
                              "</w:tbl>" +
                              "</w:body></w:document>");
             }
@@ -1756,9 +1757,10 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var model = reader.ReadDocument();
 
             var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
-            Assert.Equal(2, table.Rows.Count);
+            Assert.Equal(3, table.Rows.Count);
             Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart, table.Rows[0].Cells[0].VerticalMerge);
             Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue, table.Rows[1].Cells[0].VerticalMerge);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None, table.Rows[2].Cells[0].VerticalMerge);
         }
 
         [Fact]

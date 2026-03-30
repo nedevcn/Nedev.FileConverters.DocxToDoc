@@ -298,13 +298,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     }
                     else if (localName == "vMerge" && currentCell != null)
                     {
-                        string? mergeValue = xmlReader.GetAttribute("w:val");
-                        currentCell.VerticalMerge = mergeValue switch
-                        {
-                            "restart" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart,
-                            "continue" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue,
-                            _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue
-                        };
+                        currentCell.VerticalMerge = ParseVerticalMerge(xmlReader.GetAttribute("w:val"));
                     }
                     else if (localName == "vAlign" && currentCell != null)
                     {
@@ -1098,13 +1092,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     }
                     else if (localName == "vMerge" && currentCell != null)
                     {
-                        string? mergeValue = reader.GetAttribute("w:val");
-                        currentCell.VerticalMerge = mergeValue switch
-                        {
-                            "restart" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart,
-                            "continue" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue,
-                            _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue
-                        };
+                        currentCell.VerticalMerge = ParseVerticalMerge(reader.GetAttribute("w:val"));
                     }
                     else if (localName == "vAlign" && currentCell != null)
                     {
@@ -2418,6 +2406,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             return int.TryParse(xmlReader.GetAttribute("w:w"), out width);
+        }
+
+        private static Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge ParseVerticalMerge(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue;
+            }
+
+            return value.ToLowerInvariant() switch
+            {
+                "restart" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Restart,
+                "continue" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue,
+                "false" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
+                "0" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
+                "off" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
+                "nil" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
+                "none" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.None,
+                _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalMerge.Continue
+            };
         }
 
         private static bool TryReadBorderWidthTwips(XmlReader xmlReader, out int width, out Nedev.FileConverters.DocxToDoc.Model.BorderStyle style)
