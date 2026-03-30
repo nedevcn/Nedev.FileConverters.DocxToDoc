@@ -291,6 +291,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             void ProcessParagraph(ParagraphModel para, ref int verticalCursorTwips, int availableWidthTwips, int? maxVisibleCursorTwips = null)
             {
                 int paraStart = currentCp;
+                if (para.Properties.PageBreakBefore && currentCp > 0)
+                {
+                    AppendVisibleText("\f");
+                }
                 int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(para, availableWidthTwips);
                 int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(para, paragraphAvailableWidthTwips);
                 bool isConstrainedLayout = maxVisibleCursorTwips.HasValue;
@@ -4026,7 +4030,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static bool IsParagraphBreakCharacter(char character)
         {
-            return character == '\n' || character == '\r' || character == '\v' || character == '\f';
+            return character == '\n' || character == '\r' || character == '\v' || character == '\f' || character == '\x000E';
         }
 
         private static double EstimateCharacterWidthTwips(char character, int fontSizeTwips, bool isMonospace)

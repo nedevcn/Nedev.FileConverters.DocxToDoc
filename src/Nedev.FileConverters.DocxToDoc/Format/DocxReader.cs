@@ -603,6 +603,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentParagraph.Properties.FirstLineIndentTwips = -hanging;
                         }
                     }
+                    else if (localName == "pageBreakBefore" && currentParagraph != null)
+                    {
+                        currentParagraph.Properties.PageBreakBefore = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                                                    !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
+                    }
                     else if (localName == "ins")
                     {
                         inIns = true;
@@ -670,7 +675,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 {
                                     if (xmlReader.NodeType == XmlNodeType.Element)
                                     {
-                                        if (xmlReader.LocalName == "t" || xmlReader.LocalName == "delText" || xmlReader.LocalName == "tab" || xmlReader.LocalName == "ptab" || xmlReader.LocalName == "br" || xmlReader.LocalName == "cr" || xmlReader.LocalName == "noBreakHyphen" || xmlReader.LocalName == "softHyphen" || xmlReader.LocalName == "sym")
+                                        if (xmlReader.LocalName == "t" || xmlReader.LocalName == "delText" || xmlReader.LocalName == "tab" || xmlReader.LocalName == "ptab" || xmlReader.LocalName == "br" || xmlReader.LocalName == "cr" || xmlReader.LocalName == "lastRenderedPageBreak" || xmlReader.LocalName == "noBreakHyphen" || xmlReader.LocalName == "softHyphen" || xmlReader.LocalName == "sym")
                                         {
                                             AppendRunTextFragment(currentParagraph, ref run, runBaseProperties, textBuffer, xmlReader, hyperlink);
                                         }
@@ -747,7 +752,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             simpleFields.Push((currentParagraph, field));
                         }
                     }
-                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") && currentRun != null && currentParagraph != null && currentRunBaseProperties != null)
+                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "lastRenderedPageBreak" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") && currentRun != null && currentParagraph != null && currentRunBaseProperties != null)
                     {
                         AppendRunTextFragment(currentParagraph, ref currentRun, currentRunBaseProperties, textBuffer, xmlReader);
                     }
@@ -1388,7 +1393,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 {
                                     if (reader.NodeType == XmlNodeType.Element)
                                     {
-                                        if (reader.LocalName == "t" || reader.LocalName == "delText" || reader.LocalName == "tab" || reader.LocalName == "ptab" || reader.LocalName == "br" || reader.LocalName == "cr" || reader.LocalName == "noBreakHyphen" || reader.LocalName == "softHyphen" || reader.LocalName == "sym")
+                                        if (reader.LocalName == "t" || reader.LocalName == "delText" || reader.LocalName == "tab" || reader.LocalName == "ptab" || reader.LocalName == "br" || reader.LocalName == "cr" || reader.LocalName == "lastRenderedPageBreak" || reader.LocalName == "noBreakHyphen" || reader.LocalName == "softHyphen" || reader.LocalName == "sym")
                                         {
                                             AppendHeaderFooterRunTextFragment(currentParagraph, ref run, runBaseProperties, reader, hyperlink);
                                         }
@@ -1466,7 +1471,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             simpleFields.Push((currentParagraph, field));
                         }
                     }
-                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") &&
+                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "lastRenderedPageBreak" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") &&
                              currentRun != null &&
                              currentParagraph != null)
                     {
@@ -2863,7 +2868,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 "tab" => "\t",
                 "ptab" => "\t",
                 "cr" => "\v",
-                "br" => string.Equals(reader.GetAttribute("w:type"), "page", StringComparison.OrdinalIgnoreCase) ? "\f" : "\v",
+                "br" => string.Equals(reader.GetAttribute("w:type"), "page", StringComparison.OrdinalIgnoreCase)
+                    ? "\f"
+                    : string.Equals(reader.GetAttribute("w:type"), "column", StringComparison.OrdinalIgnoreCase)
+                        ? "\x000E"
+                        : "\v",
+                "lastRenderedPageBreak" => "\f",
                 "noBreakHyphen" => "\u2011",
                 "softHyphen" => "\u00AD",
                 "sym" => ReadSymbolFragment(reader),
@@ -3156,7 +3166,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             bookmarkStarts.Remove(id);
                         }
                     }
-                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
+                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "lastRenderedPageBreak" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
                     {
                         currentCp += ReadRunTextFragment(reader).Length;
                     }
@@ -3264,7 +3274,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             anchoredComments.Add(id);
                         }
                     }
-                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
+                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "lastRenderedPageBreak" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
                     {
                         currentCp += ReadRunTextFragment(reader).Length;
                     }
@@ -3639,7 +3649,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                         seenParagraph = true;
                     }
-                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
+                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "lastRenderedPageBreak" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
                     {
                         string text = ReadRunTextFragment(reader);
                         if (!string.IsNullOrEmpty(text))
@@ -4032,6 +4042,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                    localName == "ptab" ||
                    localName == "br" ||
                    localName == "cr" ||
+                   localName == "lastRenderedPageBreak" ||
                    localName == "noBreakHyphen" ||
                    localName == "softHyphen" ||
                    localName == "sym";
@@ -4100,7 +4111,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentCommentLastParagraphId = paragraphId;
                         }
                     }
-                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") && currentComment != null)
+                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "lastRenderedPageBreak" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") && currentComment != null)
                     {
                         currentComment.Text += ReadRunTextFragment(reader);
                     }

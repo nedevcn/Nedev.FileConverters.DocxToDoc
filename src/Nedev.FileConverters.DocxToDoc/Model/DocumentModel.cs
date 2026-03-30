@@ -288,6 +288,7 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public int SpacingAfterTwips { get; set; }
             public int? LineSpacing { get; set; }
             public string? LineSpacingRule { get; set; }
+            public bool PageBreakBefore { get; set; }
         }
 
         public enum Justification

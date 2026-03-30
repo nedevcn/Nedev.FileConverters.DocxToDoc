@@ -240,6 +240,107 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithLastRenderedPageBreak_AppendsFormFeed()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:t>A</w:t><w:lastRenderedPageBreak/><w:t>B</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Equal("A\fB", run.Text);
+            Assert.Equal("A\fB\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithColumnBreak_AppendsColumnBreakCharacter()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                             "<w:r><w:t>A</w:t><w:br w:type=\"column\"/><w:t>B</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            char columnBreak = '\x000E';
+            Assert.Equal($"A{columnBreak}B", run.Text);
+            Assert.Equal($"A{columnBreak}B\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithPageBreakBefore_ParsesParagraphProperty()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:p><w:r><w:t>First</w:t></w:r></w:p>" +
+                             "<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.False(model.Paragraphs[0].Properties.PageBreakBefore);
+            Assert.True(model.Paragraphs[1].Properties.PageBreakBefore);
+        }
+
+        [Fact]
+        public void ReadDocument_WithPageBreakBeforeDisabled_ParsesFalseParagraphProperty()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:p><w:r><w:t>First</w:t></w:r></w:p>" +
+                             "<w:p><w:pPr><w:pageBreakBefore w:val=\"false\"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>" +
+                             "</w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.False(model.Paragraphs[0].Properties.PageBreakBefore);
+            Assert.False(model.Paragraphs[1].Properties.PageBreakBefore);
+        }
+
+        [Fact]
         public void ReadDocument_WithDrawingTextBoxContent_PreservesVisibleText()
         {
             using var ms = new MemoryStream();
