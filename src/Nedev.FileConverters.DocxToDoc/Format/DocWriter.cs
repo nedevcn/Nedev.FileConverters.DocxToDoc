@@ -3949,19 +3949,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 flags |= 1 << 4;
             }
 
-            flags |= EncodeRelativeTo(picture.VerticalRelativeTo) << 5;
-            flags |= EncodeRelativeTo(picture.HorizontalRelativeTo) << 7;
+            flags |= EncodeRelativeTo(picture.VerticalRelativeTo, isHorizontal: false) << 5;
+            flags |= EncodeRelativeTo(picture.HorizontalRelativeTo, isHorizontal: true) << 7;
 
             return flags;
         }
 
-        private static int EncodeRelativeTo(string? relativeTo)
+        private static int EncodeRelativeTo(string? relativeTo, bool isHorizontal)
         {
-            string normalized = NormalizeRelativeTo(relativeTo, isHorizontal: true);
-            if (normalized == "page")
-            {
-                normalized = NormalizeRelativeTo(relativeTo, isHorizontal: false);
-            }
+            string normalized = NormalizeRelativeTo(relativeTo, isHorizontal);
 
             if (normalized == "margin")
             {
