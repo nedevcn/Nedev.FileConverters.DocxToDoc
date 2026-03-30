@@ -3653,6 +3653,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static int ResolveTableCellTopBorderTwips(TableModel table, TableCellModel cell, TableRowModel? previousRow, int currentStartColumnIndex, int currentSpan, bool isFirstRow)
         {
+            if (cell.VerticalMerge == TableCellVerticalMerge.Continue)
+            {
+                return 0;
+            }
+
             int currentTop = HasExplicitTopBorder(cell) ? Math.Max(0, cell.BorderTopTwips) : -1;
             var previousBottom = ResolvePreviousRowBottomBorder(previousRow, currentStartColumnIndex, currentSpan);
             int prevBottomVal = previousBottom.hasExplicitOverride ? previousBottom.widthTwips : -1;

@@ -813,6 +813,23 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_TableInsideHorizontalBorder_WithVerticalMergeContinue_DoesNotShiftMergedContinuationRow()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutInsideH = GetSecondRowImageTopWithInsideHorizontalBorder(0, pngBytes, useVerticalMergeContinue: true);
+            int topWithInsideH = GetSecondRowImageTopWithInsideHorizontalBorder(240, pngBytes, useVerticalMergeContinue: true);
+
+            Assert.Equal(topWithoutInsideH, topWithInsideH);
+        }
+
+        [Fact]
         public void WriteDocBlocks_TableBorderConflict_UsesExplicitCellBorderOverInsideBorder()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -2159,7 +2176,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
-        private static int GetSecondRowImageTopWithInsideHorizontalBorder(int insideHorizontalBorderTwips, byte[] pngBytes)
+        private static int GetSecondRowImageTopWithInsideHorizontalBorder(int insideHorizontalBorderTwips, byte[] pngBytes, bool useVerticalMergeContinue = false)
         {
             var model = new DocumentModel();
             var table = new TableModel { DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips };
@@ -2174,6 +2191,10 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             var secondRow = new TableRowModel();
             var secondCell = new TableCellModel { Width = 2600 };
+            if (useVerticalMergeContinue)
+            {
+                secondCell.VerticalMerge = TableCellVerticalMerge.Continue;
+            }
             secondCell.Paragraphs.Add(new ParagraphModel
             {
                 Runs =
