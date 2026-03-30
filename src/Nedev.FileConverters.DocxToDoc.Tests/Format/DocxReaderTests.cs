@@ -599,6 +599,53 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithStyleBasedOnChainAndExplicitZeroSpacingIndent_PreservesZeroOverrides()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"Child\"/></w:pPr><w:r><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Base\">" +
+                                 "<w:name w:val=\"Base\"/>" +
+                                 "<w:pPr><w:spacing w:before=\"180\" w:after=\"240\"/><w:ind w:left=\"720\" w:right=\"360\" w:firstLine=\"240\"/></w:pPr>" +
+                                 "</w:style>" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"Child\">" +
+                                 "<w:name w:val=\"Child\"/>" +
+                                 "<w:basedOn w:val=\"Base\"/>" +
+                                 "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/><w:ind w:left=\"0\" w:right=\"0\" w:firstLine=\"0\"/></w:pPr>" +
+                                 "</w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Equal(0, paragraph.Properties.SpacingBeforeTwips);
+            Assert.Equal(0, paragraph.Properties.SpacingAfterTwips);
+            Assert.Equal(0, paragraph.Properties.LeftIndentTwips);
+            Assert.Equal(0, paragraph.Properties.RightIndentTwips);
+            Assert.Equal(0, paragraph.Properties.FirstLineIndentTwips);
+        }
+
+        [Fact]
         public void ReadDocument_WithParagraphAndRunStyles_AppliesEffectiveCharacterPropertiesToRuns()
         {
             using var ms = new MemoryStream();
@@ -775,6 +822,45 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
             Assert.Null(run.Properties.Color);
             Assert.True(run.Properties.ColorSpecified);
+        }
+
+        [Fact]
+        public void ReadDocument_WithParagraphAndRunStyles_RunStyleFontSettingsOverrideParagraphStyle()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var stream = documentEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:body><w:p><w:pPr><w:pStyle w:val=\"ParagraphStyle\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"RunStyle\"/></w:rPr><w:t>A</w:t></w:r></w:p></w:body>" +
+                                 "</w:document>");
+                }
+
+                var stylesEntry = archive.CreateEntry("word/styles.xml");
+                using (var stream = stylesEntry.Open())
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:style w:type=\"paragraph\" w:styleId=\"ParagraphStyle\"><w:name w:val=\"ParagraphStyle\"/><w:rPr><w:rFonts w:ascii=\"Calibri\"/><w:sz w:val=\"28\"/></w:rPr></w:style>" +
+                                 "<w:style w:type=\"character\" w:styleId=\"RunStyle\"><w:name w:val=\"RunStyle\"/><w:rPr><w:rFonts w:ascii=\"Consolas\"/><w:sz w:val=\"18\"/></w:rPr></w:style>" +
+                                 "</w:styles>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+            var model = reader.ReadDocument();
+
+            var run = Assert.Single(Assert.Single(model.Paragraphs).Runs);
+            Assert.Equal("Consolas", run.Properties.FontName);
+            Assert.Equal(18, run.Properties.FontSize);
+            Assert.True(run.Properties.FontNameSpecified);
+            Assert.True(run.Properties.FontSizeSpecified);
         }
 
         [Fact]

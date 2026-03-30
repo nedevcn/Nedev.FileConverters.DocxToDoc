@@ -282,11 +282,16 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public int? NumberingId { get; set; }
             public int? NumberingLevel { get; set; }
             public int LeftIndentTwips { get; set; }
+            public bool LeftIndentSpecified { get; set; }
             public int RightIndentTwips { get; set; }
+            public bool RightIndentSpecified { get; set; }
             public int FirstLineIndentTwips { get; set; }
+            public bool FirstLineIndentSpecified { get; set; }
             public string? ParagraphStyleId { get; set; }
             public int SpacingBeforeTwips { get; set; }
+            public bool SpacingBeforeSpecified { get; set; }
             public int SpacingAfterTwips { get; set; }
+            public bool SpacingAfterSpecified { get; set; }
             public int? LineSpacing { get; set; }
             public string? LineSpacingRule { get; set; }
             public bool KeepNext { get; set; }
@@ -328,7 +333,9 @@ namespace Nedev.FileConverters.DocxToDoc.Model
             public bool IsStrike { get; set; }
             public bool IsStrikeSpecified { get; set; }
             public int? FontSize { get; set; } // In half-points (e.g., 24 = 12pt)
+            public bool FontSizeSpecified { get; set; }
             public string? FontName { get; set; }
+            public bool FontNameSpecified { get; set; }
             public UnderlineType Underline { get; set; } = UnderlineType.None;
             public bool UnderlineSpecified { get; set; }
             public string? Color { get; set; } // Hex color like "FF0000"
