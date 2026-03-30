@@ -777,7 +777,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         int rowHeightTwips = 0;
                         int gridColumnIndex = 0;
-                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int verticalOffsetTwips)>();
+                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int bottomOffsetTwips, int verticalOffsetTwips)>();
 
                         foreach (var cell in row.Cells)
                         {
@@ -795,7 +795,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             int bottomSpacingTwips = ResolveTableCellBottomSpacingTwips(table);
                             int cellTotalHeightTwips = topSpacingTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomSpacingTwips;
                             rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
-                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topSpacingTwips + topPaddingTwips, 0));
+                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topSpacingTwips + topPaddingTwips, bottomPaddingTwips + bottomSpacingTwips, 0));
                             gridColumnIndex += gridSpan;
                         }
 
@@ -805,12 +805,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             var layout = cellLayouts[cellIndex];
                             int verticalOffsetTwips = ResolveTableCellVerticalAlignmentOffset(layout.cell, rowHeightTwips, layout.totalHeightTwips);
-                            cellLayouts[cellIndex] = (layout.cell, layout.availableWidthTwips, layout.totalHeightTwips, layout.topOffsetTwips, verticalOffsetTwips);
+                            cellLayouts[cellIndex] = (layout.cell, layout.availableWidthTwips, layout.totalHeightTwips, layout.topOffsetTwips, layout.bottomOffsetTwips, verticalOffsetTwips);
                         }
 
                         foreach (var cellLayout in cellLayouts)
                         {
                             int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
+                            int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
                             foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
                             {
                                 if (cellBlock is ParagraphModel paragraph)
@@ -818,14 +819,27 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                     int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellLayout.availableWidthTwips);
                                     int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
                                     int paragraphTopTwips = verticalCursorTwips + cellVerticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
+                                    if (row.HeightRule == TableRowHeightRule.Exact)
+                                    {
+                                        paragraphTopTwips = Math.Min(paragraphTopTwips, verticalCursorTwips + maxVisibleCursorTwips);
+                                    }
+
                                     AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, inTable: true);
                                     cellVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
+                                    if (row.HeightRule == TableRowHeightRule.Exact)
+                                    {
+                                        cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
+                                    }
                                 }
                                 else if (cellBlock is TableModel nestedTable)
                                 {
                                     int nestedVerticalCursorTwips = verticalCursorTwips + cellVerticalCursorTwips;
                                     AppendStructuredHeaderFooterTable(nestedTable, layoutSectionForStory, cellLayout.availableWidthTwips, ref nestedVerticalCursorTwips, ref localStoryLength);
                                     cellVerticalCursorTwips = Math.Max(cellVerticalCursorTwips, nestedVerticalCursorTwips - verticalCursorTwips);
+                                    if (row.HeightRule == TableRowHeightRule.Exact)
+                                    {
+                                        cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
+                                    }
                                 }
                             }
 

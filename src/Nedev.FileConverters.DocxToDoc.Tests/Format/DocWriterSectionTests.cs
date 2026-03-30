@@ -1877,6 +1877,17 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsSecondParagraphFloatingImageTop()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(0, TableRowHeightRule.Auto);
+            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(900, TableRowHeightRule.Exact);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithEmptyStructuredHeaderStory_WritesGuardParagraphOnly()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -2475,6 +2486,85 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             table.Rows.Add(row);
             story.Content.Add(table);
             story.Paragraphs.Add(cellParagraph);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondParagraphFloatingImageTopWithRowRule(int rowHeightTwips, TableRowHeightRule heightRule)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel();
+            table.GridColumnWidths.Add(2400);
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+            var cell = new TableCellModel
+            {
+                Width = 2400,
+                VerticalAlignment = TableCellVerticalAlignment.Top
+            };
+
+            var firstParagraph = new ParagraphModel();
+            firstParagraph.Runs.Add(new RunModel
+            {
+                Text = "Tall intro line for clipping behavior",
+                Properties =
+                {
+                    FontSize = 72
+                }
+            });
+
+            var secondParagraph = new ParagraphModel();
+            secondParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    VerticalRelativeTo = "paragraph",
+                    PositionYTwips = 0
+                }
+            });
+
+            cell.Content.Add(firstParagraph);
+            cell.Content.Add(secondParagraph);
+            cell.Paragraphs.Add(firstParagraph);
+            cell.Paragraphs.Add(secondParagraph);
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            story.Content.Add(table);
+            story.Paragraphs.Add(firstParagraph);
+            story.Paragraphs.Add(secondParagraph);
 
             var model = new DocumentModel();
             model.Content.Add(new ParagraphModel
