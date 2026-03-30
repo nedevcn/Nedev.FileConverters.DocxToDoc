@@ -1881,8 +1881,52 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(0, TableRowHeightRule.Auto);
-            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(900, TableRowHeightRule.Exact);
+            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(0, TableRowHeightRule.Auto, null);
+            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(900, TableRowHeightRule.Exact, null);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsBottomAlignedSecondParagraphFloatingImageTop()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(0, TableRowHeightRule.Auto, "bottom");
+            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(900, TableRowHeightRule.Exact, "bottom");
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsSecondParagraphFloatingImageTop_WithNegativeSpacingAfter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(0, TableRowHeightRule.Auto, null, firstParagraphSpacingAfterTwips: -600);
+            int topWithExactHeight = GetHeaderSecondParagraphFloatingImageTopWithRowRule(900, TableRowHeightRule.Exact, null, firstParagraphSpacingAfterTwips: -600);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsNestedTableFloatingImageTop()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(0, TableRowHeightRule.Auto, 0);
+            int topWithExactHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(1200, TableRowHeightRule.Exact, 0);
+
+            Assert.True(topWithExactHeight < topWithAutoHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableExactRowHeight_ClipsNestedTableFloatingImageTop_WithNegativeSpacingAfter()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(0, TableRowHeightRule.Auto, -600);
+            int topWithExactHeight = GetHeaderNestedTableFloatingImageTopWithOuterRowRule(1200, TableRowHeightRule.Exact, -600);
 
             Assert.True(topWithExactHeight < topWithAutoHeight);
         }
@@ -1896,6 +1940,127 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int topWithBorders = GetHeaderFloatingImageTopWithTableCellBorders(300, 300);
 
             Assert.True(topWithBorders > topWithoutBorders);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableFixedFirstCellWidth_ShrinksSecondCellAndPushesSecondParagraphImageDown()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithAutoFirstCell = GetHeaderSecondCellSecondParagraphImageTop(hasFixedFirstCellWidth: false);
+            int topWithFixedFirstCell = GetHeaderSecondCellSecondParagraphImageTop(hasFixedFirstCellWidth: true);
+
+            Assert.True(topWithFixedFirstCell > topWithAutoFirstCell);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideHorizontalBorder_ShiftsSecondRowFloatingImageDown()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutInsideHorizontal = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorder(0);
+            int topWithInsideHorizontal = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorder(300);
+
+            Assert.True(topWithInsideHorizontal > topWithoutInsideHorizontal);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideVerticalBorder_ShrinksSecondCellAndPushesSecondParagraphImageDown()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithoutInsideVertical = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorder(0);
+            int topWithInsideVertical = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorder(1200);
+
+            Assert.True(topWithInsideVertical > topWithoutInsideVertical);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideVerticalBorder_ExplicitNoneOnPreviousRightBorderSuppressesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderConflict(1200, explicitPreviousRightBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitNone = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderConflict(1200, explicitPreviousRightBorderTwips: 0, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitNone < topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideVerticalBorder_ExplicitPreviousRightBorderAmplifiesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderConflict(1200, explicitPreviousRightBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitRightBorder = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderConflict(1200, explicitPreviousRightBorderTwips: 1800, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitRightBorder > topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideVerticalBorder_ExplicitCurrentLeftNoneSuppressesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderCurrentLeftConflict(1200, explicitCurrentLeftBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitLeftNone = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderCurrentLeftConflict(1200, explicitCurrentLeftBorderTwips: 0, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitLeftNone < topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideVerticalBorder_ExplicitCurrentLeftBorderAmplifiesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderCurrentLeftConflict(1200, explicitCurrentLeftBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitLeftBorder = GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderCurrentLeftConflict(1200, explicitCurrentLeftBorderTwips: 1800, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitLeftBorder > topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideHorizontalBorder_ExplicitNoneOnPreviousBottomBorderSuppressesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderConflict(900, explicitPreviousBottomBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitNone = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderConflict(900, explicitPreviousBottomBorderTwips: 0, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitNone < topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideHorizontalBorder_ExplicitPreviousBottomBorderAmplifiesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderConflict(300, explicitPreviousBottomBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitBottomBorder = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderConflict(300, explicitPreviousBottomBorderTwips: 1200, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitBottomBorder > topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideHorizontalBorder_ExplicitCurrentTopNoneSuppressesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderCurrentTopConflict(900, explicitCurrentTopBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitTopNone = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderCurrentTopConflict(900, explicitCurrentTopBorderTwips: 0, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitTopNone < topWithInsideOnly);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderTableInsideHorizontalBorder_ExplicitCurrentTopBorderAmplifiesImpact()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            int topWithInsideOnly = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderCurrentTopConflict(900, explicitCurrentTopBorderTwips: null, setExplicitOverride: false);
+            int topWithExplicitTopBorder = GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderCurrentTopConflict(900, explicitCurrentTopBorderTwips: 1200, setExplicitOverride: true);
+
+            Assert.True(topWithExplicitTopBorder > topWithInsideOnly);
         }
 
         [Fact]
@@ -2528,7 +2693,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
         }
 
-        private static int GetHeaderSecondParagraphFloatingImageTopWithRowRule(int rowHeightTwips, TableRowHeightRule heightRule)
+        private static int GetHeaderSecondParagraphFloatingImageTopWithRowRule(int rowHeightTwips, TableRowHeightRule heightRule, string? imageVerticalAlignment, int firstParagraphSpacingAfterTwips = 0)
         {
             var story = new HeaderFooterStoryModel();
 
@@ -2542,6 +2707,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             };
 
             var firstParagraph = new ParagraphModel();
+            firstParagraph.Properties.SpacingAfterTwips = firstParagraphSpacingAfterTwips;
             firstParagraph.Runs.Add(new RunModel
             {
                 Text = "Tall intro line for clipping behavior",
@@ -2563,6 +2729,7 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                     LayoutType = ImageLayoutType.Floating,
                     WrapType = ImageWrapType.Square,
                     VerticalRelativeTo = "paragraph",
+                    VerticalAlignment = imageVerticalAlignment,
                     PositionYTwips = 0
                 }
             });
@@ -2576,6 +2743,92 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             story.Content.Add(table);
             story.Paragraphs.Add(firstParagraph);
             story.Paragraphs.Add(secondParagraph);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderNestedTableFloatingImageTopWithOuterRowRule(int outerRowHeightTwips, TableRowHeightRule outerHeightRule, int firstNestedParagraphSpacingAfterTwips)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var outerTable = new TableModel();
+            outerTable.GridColumnWidths.Add(2400);
+            var outerRow = new TableRowModel { HeightTwips = outerRowHeightTwips, HeightRule = outerHeightRule };
+            var outerCell = new TableCellModel { Width = 2400, VerticalAlignment = TableCellVerticalAlignment.Top };
+
+            var nestedTable = new TableModel();
+            nestedTable.GridColumnWidths.Add(2200);
+            var nestedRow = new TableRowModel();
+            var nestedCell = new TableCellModel { Width = 2200 };
+
+            var nestedFirstParagraph = new ParagraphModel();
+            nestedFirstParagraph.Properties.SpacingAfterTwips = firstNestedParagraphSpacingAfterTwips;
+            nestedFirstParagraph.Runs.Add(new RunModel
+            {
+                Text = "Tall nested intro line for clipping behavior",
+                Properties =
+                {
+                    FontSize = 72
+                }
+            });
+
+            var nestedSecondParagraph = new ParagraphModel();
+            nestedSecondParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    VerticalRelativeTo = "paragraph",
+                    PositionYTwips = 0
+                }
+            });
+
+            nestedCell.Content.Add(nestedFirstParagraph);
+            nestedCell.Content.Add(nestedSecondParagraph);
+            nestedCell.Paragraphs.Add(nestedFirstParagraph);
+            nestedCell.Paragraphs.Add(nestedSecondParagraph);
+            nestedRow.Cells.Add(nestedCell);
+            nestedTable.Rows.Add(nestedRow);
+
+            outerCell.Content.Add(nestedTable);
+            outerRow.Cells.Add(outerCell);
+            outerTable.Rows.Add(outerRow);
+
+            story.Content.Add(outerTable);
+            story.Paragraphs.Add(nestedFirstParagraph);
+            story.Paragraphs.Add(nestedSecondParagraph);
 
             var model = new DocumentModel();
             model.Content.Add(new ParagraphModel
@@ -2646,6 +2899,644 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             });
             story.Content.Add(tail);
             story.Paragraphs.Add(tail);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondCellSecondParagraphImageTop(bool hasFixedFirstCellWidth)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                PreferredWidthUnit = TableWidthUnit.Dxa,
+                PreferredWidthValue = 7000
+            };
+            var row = new TableRowModel();
+
+            var firstCell = new TableCellModel
+            {
+                Width = hasFixedFirstCellWidth ? 3600 : 0,
+                WidthUnit = hasFixedFirstCellWidth ? TableWidthUnit.Dxa : TableWidthUnit.Auto
+            };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Lead" }
+                }
+            });
+
+            var secondCell = new TableCellModel();
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph is intentionally long to trigger wrapping when width is reduced by a fixed first cell."
+                    }
+                }
+            });
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = GetTestPngBytes(),
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 96,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 0
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.AddRange(secondCell.Content.ConvertAll(static c => (ParagraphModel)c));
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.AddRange(secondCell.Paragraphs);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorder(int insideHorizontalBorderTwips)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips
+            };
+            table.GridColumnWidths.Add(2400);
+
+            var firstRow = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2400 };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Row1" }
+                }
+            });
+            firstRow.Cells.Add(firstCell);
+            table.Rows.Add(firstRow);
+
+            var secondRow = new TableRowModel();
+            var secondCell = new TableCellModel { Width = 2400 };
+            var secondParagraph = new ParagraphModel();
+            secondParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    VerticalRelativeTo = "paragraph",
+                    PositionYTwips = 0
+                }
+            });
+            secondCell.Paragraphs.Add(secondParagraph);
+            secondRow.Cells.Add(secondCell);
+            table.Rows.Add(secondRow);
+
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.Add(secondParagraph);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorder(int insideVerticalBorderTwips)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                PreferredWidthUnit = TableWidthUnit.Dxa,
+                PreferredWidthValue = 4200,
+                DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips
+            };
+            var row = new TableRowModel();
+
+            var firstCell = new TableCellModel { Width = 2000 };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Left" }
+                }
+            });
+
+            var secondCell = new TableCellModel();
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should wrap more when inside vertical border consumes horizontal width."
+                    }
+                }
+            });
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = GetTestPngBytes(),
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 96,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 0
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.AddRange(secondCell.Content.ConvertAll(static c => (ParagraphModel)c));
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.AddRange(secondCell.Paragraphs);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderConflict(int insideVerticalBorderTwips, int? explicitPreviousRightBorderTwips, bool setExplicitOverride)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                PreferredWidthUnit = TableWidthUnit.Dxa,
+                PreferredWidthValue = 4200,
+                DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips
+            };
+            var row = new TableRowModel();
+
+            var firstCell = new TableCellModel { Width = 2000 };
+            if (explicitPreviousRightBorderTwips.HasValue)
+            {
+                firstCell.BorderRightTwips = explicitPreviousRightBorderTwips.Value;
+            }
+
+            if (setExplicitOverride)
+            {
+                firstCell.HasRightBorderOverride = true;
+            }
+
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Left" }
+                }
+            });
+
+            var secondCell = new TableCellModel();
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should wrap more when inside vertical border consumes horizontal width."
+                    }
+                }
+            });
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = GetTestPngBytes(),
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 96,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 0
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.AddRange(secondCell.Content.ConvertAll(static c => (ParagraphModel)c));
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.AddRange(secondCell.Paragraphs);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondCellSecondParagraphImageTopWithInsideVerticalBorderCurrentLeftConflict(int insideVerticalBorderTwips, int? explicitCurrentLeftBorderTwips, bool setExplicitOverride)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                PreferredWidthUnit = TableWidthUnit.Dxa,
+                PreferredWidthValue = 4200,
+                DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips
+            };
+            var row = new TableRowModel();
+
+            var firstCell = new TableCellModel { Width = 2000 };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Left" }
+                }
+            });
+
+            var secondCell = new TableCellModel();
+            if (explicitCurrentLeftBorderTwips.HasValue)
+            {
+                secondCell.BorderLeftTwips = explicitCurrentLeftBorderTwips.Value;
+            }
+
+            if (setExplicitOverride)
+            {
+                secondCell.HasLeftBorderOverride = true;
+            }
+
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "This paragraph should wrap more when inside vertical border consumes horizontal width."
+                    }
+                }
+            });
+            secondCell.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = GetTestPngBytes(),
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 96,
+                            LayoutType = ImageLayoutType.Floating,
+                            WrapType = ImageWrapType.Square,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 0
+                        }
+                    }
+                }
+            });
+            secondCell.Paragraphs.AddRange(secondCell.Content.ConvertAll(static c => (ParagraphModel)c));
+
+            row.Cells.Add(firstCell);
+            row.Cells.Add(secondCell);
+            table.Rows.Add(row);
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.AddRange(secondCell.Paragraphs);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderConflict(int insideHorizontalBorderTwips, int? explicitPreviousBottomBorderTwips, bool setExplicitOverride)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips
+            };
+            table.GridColumnWidths.Add(2400);
+
+            var firstRow = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2400 };
+            if (explicitPreviousBottomBorderTwips.HasValue)
+            {
+                firstCell.BorderBottomTwips = explicitPreviousBottomBorderTwips.Value;
+            }
+
+            if (setExplicitOverride)
+            {
+                firstCell.HasBottomBorderOverride = true;
+            }
+
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Row1" }
+                }
+            });
+            firstRow.Cells.Add(firstCell);
+            table.Rows.Add(firstRow);
+
+            var secondRow = new TableRowModel();
+            var secondCell = new TableCellModel { Width = 2400 };
+            var secondParagraph = new ParagraphModel();
+            secondParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    VerticalRelativeTo = "paragraph",
+                    PositionYTwips = 0
+                }
+            });
+            secondCell.Paragraphs.Add(secondParagraph);
+            secondRow.Cells.Add(secondCell);
+            table.Rows.Add(secondRow);
+
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.Add(secondParagraph);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = story
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, 154 + (Fib.HeaderShapePairIndex * 8));
+            Assert.NotEqual(0, fcPlcSpaHdr);
+
+            return BitConverter.ToInt32(tableData, fcPlcSpaHdr + 16);
+        }
+
+        private static int GetHeaderSecondRowFloatingImageTopWithInsideHorizontalBorderCurrentTopConflict(int insideHorizontalBorderTwips, int? explicitCurrentTopBorderTwips, bool setExplicitOverride)
+        {
+            var story = new HeaderFooterStoryModel();
+
+            var table = new TableModel
+            {
+                DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips
+            };
+            table.GridColumnWidths.Add(2400);
+
+            var firstRow = new TableRowModel();
+            var firstCell = new TableCellModel { Width = 2400 };
+            firstCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Row1" }
+                }
+            });
+            firstRow.Cells.Add(firstCell);
+            table.Rows.Add(firstRow);
+
+            var secondRow = new TableRowModel();
+            var secondCell = new TableCellModel { Width = 2400 };
+            if (explicitCurrentTopBorderTwips.HasValue)
+            {
+                secondCell.BorderTopTwips = explicitCurrentTopBorderTwips.Value;
+            }
+
+            if (setExplicitOverride)
+            {
+                secondCell.HasTopBorderOverride = true;
+            }
+
+            var secondParagraph = new ParagraphModel();
+            secondParagraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    VerticalRelativeTo = "paragraph",
+                    PositionYTwips = 0
+                }
+            });
+            secondCell.Paragraphs.Add(secondParagraph);
+            secondRow.Cells.Add(secondCell);
+            table.Rows.Add(secondRow);
+
+            story.Content.Add(table);
+            story.Paragraphs.AddRange(firstCell.Paragraphs);
+            story.Paragraphs.Add(secondParagraph);
 
             var model = new DocumentModel();
             model.Content.Add(new ParagraphModel

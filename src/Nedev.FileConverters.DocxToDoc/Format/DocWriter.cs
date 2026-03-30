@@ -293,7 +293,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 int paraStart = currentCp;
                 int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(para, availableWidthTwips);
                 int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(para, paragraphAvailableWidthTwips);
-                int paragraphTopTwips = verticalCursorTwips + para.Properties.SpacingBeforeTwips;
+                bool isConstrainedLayout = maxVisibleCursorTwips.HasValue;
+                int spacingBeforeTwips = isConstrainedLayout
+                    ? Math.Max(0, para.Properties.SpacingBeforeTwips)
+                    : para.Properties.SpacingBeforeTwips;
+                int paragraphTopTwips = verticalCursorTwips + spacingBeforeTwips;
 
                 if (maxVisibleCursorTwips.HasValue)
                 {
@@ -301,7 +305,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     paragraphContentHeightTwips = Math.Min(paragraphContentHeightTwips, maxAllowedHeight);
                 }
 
-                int paragraphAdvanceTwips = EstimateParagraphAdvanceTwips(para, paragraphContentHeightTwips);
+                int paragraphAdvanceTwips = EstimateParagraphAdvanceTwips(para, paragraphContentHeightTwips, constrainSpacing: isConstrainedLayout);
                 var autoCompletedFields = new HashSet<FieldModel>();
                 var separatedFields = new HashSet<FieldModel>();
                 var openFields = new List<FieldModel>();
@@ -622,7 +626,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
-            void ProcessTable(TableModel table, ref int verticalCursorTwips, int availableWidthTwips)
+            void ProcessTable(TableModel table, ref int verticalCursorTwips, int availableWidthTwips, int? maxVisibleCursorTwips = null)
             {
                 for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
                 {
@@ -677,19 +681,30 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     foreach (var cellLayout in cellLayouts)
                     {
                         int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
-                        int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
+                        int maxVisibleCursorTwipsForCell = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
+                        if (maxVisibleCursorTwips.HasValue)
+                        {
+                            int inheritedVisibleCursorTwips = Math.Max(0, maxVisibleCursorTwips.Value - verticalCursorTwips);
+                            maxVisibleCursorTwipsForCell = Math.Min(maxVisibleCursorTwipsForCell, inheritedVisibleCursorTwips);
+                        }
+
                         foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
                         {
                             if (cellBlock is ParagraphModel cellParagraph)
                             {
-                                ProcessParagraph(cellParagraph, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips, row.HeightRule == TableRowHeightRule.Exact ? maxVisibleCursorTwips : null);
+                                ProcessParagraph(
+                                    cellParagraph,
+                                    ref cellVerticalCursorTwips,
+                                    cellLayout.availableWidthTwips,
+                                    row.HeightRule == TableRowHeightRule.Exact || maxVisibleCursorTwips.HasValue ? maxVisibleCursorTwipsForCell : null);
                             }
                             else if (cellBlock is TableModel nestedTable)
                             {
-                                ProcessTable(nestedTable, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips);
-                                if (row.HeightRule == TableRowHeightRule.Exact)
+                                int nestedMaxVisibleCursorTwips = maxVisibleCursorTwipsForCell;
+                                ProcessTable(nestedTable, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips, nestedMaxVisibleCursorTwips);
+                                if (row.HeightRule == TableRowHeightRule.Exact || maxVisibleCursorTwips.HasValue)
                                 {
-                                    cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
+                                    cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwipsForCell);
                                 }
                             }
                         }
@@ -720,6 +735,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                     tapxWriter.AddRow(rowMarkStart, currentCp, tapSprms.ToArray());
                     verticalCursorTwips += rowHeightTwips;
+                    if (maxVisibleCursorTwips.HasValue)
+                    {
+                        verticalCursorTwips = Math.Min(verticalCursorTwips, maxVisibleCursorTwips.Value);
+                    }
                 }
             }
 
@@ -771,13 +790,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                 AppendHeaderParagraphMark(ref storyLength);
 
-                void AppendStructuredHeaderFooterTable(TableModel table, SectionModel? layoutSectionForStory, int tableAvailableWidthTwips, ref int verticalCursorTwips, ref int localStoryLength)
+                void AppendStructuredHeaderFooterTable(TableModel table, SectionModel? layoutSectionForStory, int tableAvailableWidthTwips, ref int verticalCursorTwips, ref int localStoryLength, int? maxVisibleBottomTwips = null)
                 {
                     for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
                     {
                         var row = table.Rows[rowIndex];
                         var previousRow = rowIndex > 0 ? table.Rows[rowIndex - 1] : null;
                         int totalColumnCount = ResolveTableTotalColumnCount(table, row);
+                        int resolvedTableAvailableWidthTwips = ResolveTableAvailableWidthTwips(table, row, tableAvailableWidthTwips, totalColumnCount);
+                        var resolvedRowWidthsTwips = ResolveRowCellWidthsTwips(table, row, resolvedTableAvailableWidthTwips, totalColumnCount);
                         int rowHeightTwips = 0;
                         int gridColumnIndex = 0;
                         var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int bottomOffsetTwips, int verticalOffsetTwips)>();
@@ -791,9 +812,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             bool isFirstColumn = gridColumnIndex == 0;
                             bool isLastColumn = gridColumnIndex + gridSpan >= totalColumnCount;
                             var previousCell = cellIndex > 0 ? row.Cells[cellIndex - 1] : null;
-                            int cellWidthTwips = cell.Width > 0
-                                ? cell.Width
-                                : ResolveTableCellWidth(table, gridColumnIndex, gridSpan, tableAvailableWidthTwips);
+                            int resolvedCellWidthTwips = cellIndex < resolvedRowWidthsTwips.Count ? resolvedRowWidthsTwips[cellIndex] : 0;
+                            int cellWidthTwips = resolvedCellWidthTwips > 0
+                                ? resolvedCellWidthTwips
+                                : ResolveTableCellWidth(table, gridColumnIndex, gridSpan, resolvedTableAvailableWidthTwips);
                             int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
                             int horizontalCellSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
                             int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, previousCell, isFirstColumn);
@@ -826,21 +848,31 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         {
                             int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
                             int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
+                            if (maxVisibleBottomTwips.HasValue)
+                            {
+                                int inheritedVisibleCursorTwips = Math.Max(0, maxVisibleBottomTwips.Value - verticalCursorTwips);
+                                maxVisibleCursorTwips = Math.Min(maxVisibleCursorTwips, inheritedVisibleCursorTwips);
+                            }
+
                             foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
                             {
                                 if (cellBlock is ParagraphModel paragraph)
                                 {
                                     int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellLayout.availableWidthTwips);
                                     int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
-                                    int paragraphTopTwips = verticalCursorTwips + cellVerticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
-                                    if (row.HeightRule == TableRowHeightRule.Exact)
+                                    int spacingBeforeTwips = Math.Max(0, paragraph.Properties.SpacingBeforeTwips);
+                                    int paragraphTopTwips = verticalCursorTwips + cellVerticalCursorTwips + spacingBeforeTwips;
+                                    int effectiveParagraphContentHeightTwips = paragraphContentHeightTwips;
+                                    if (row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue)
                                     {
                                         paragraphTopTwips = Math.Min(paragraphTopTwips, verticalCursorTwips + maxVisibleCursorTwips);
+                                        int visibleContentLimitTwips = Math.Max(0, maxVisibleCursorTwips - (cellVerticalCursorTwips + spacingBeforeTwips));
+                                        effectiveParagraphContentHeightTwips = Math.Min(paragraphContentHeightTwips, visibleContentLimitTwips);
                                     }
 
-                                    AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, inTable: true);
-                                    cellVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
-                                    if (row.HeightRule == TableRowHeightRule.Exact)
+                                    AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, effectiveParagraphContentHeightTwips, ref localStoryLength, inTable: true);
+                                    cellVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, effectiveParagraphContentHeightTwips, constrainSpacing: row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue);
+                                    if (row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue)
                                     {
                                         cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
                                     }
@@ -848,9 +880,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 else if (cellBlock is TableModel nestedTable)
                                 {
                                     int nestedVerticalCursorTwips = verticalCursorTwips + cellVerticalCursorTwips;
-                                    AppendStructuredHeaderFooterTable(nestedTable, layoutSectionForStory, cellLayout.availableWidthTwips, ref nestedVerticalCursorTwips, ref localStoryLength);
+                                    int nestedMaxVisibleBottomTwips = verticalCursorTwips + maxVisibleCursorTwips;
+                                    if (maxVisibleBottomTwips.HasValue)
+                                    {
+                                        nestedMaxVisibleBottomTwips = Math.Min(nestedMaxVisibleBottomTwips, maxVisibleBottomTwips.Value);
+                                    }
+
+                                    AppendStructuredHeaderFooterTable(nestedTable, layoutSectionForStory, cellLayout.availableWidthTwips, ref nestedVerticalCursorTwips, ref localStoryLength, nestedMaxVisibleBottomTwips);
                                     cellVerticalCursorTwips = Math.Max(cellVerticalCursorTwips, nestedVerticalCursorTwips - verticalCursorTwips);
-                                    if (row.HeightRule == TableRowHeightRule.Exact)
+                                    if (row.HeightRule == TableRowHeightRule.Exact || maxVisibleBottomTwips.HasValue)
                                     {
                                         cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
                                     }
@@ -887,6 +925,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                         tapxWriter.AddRow(rowMarkStart, currentCp, tapSprms.ToArray());
                         verticalCursorTwips += rowHeightTwips;
+                        if (maxVisibleBottomTwips.HasValue)
+                        {
+                            verticalCursorTwips = Math.Min(verticalCursorTwips, maxVisibleBottomTwips.Value);
+                        }
                     }
                 }
 
@@ -3994,9 +4036,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return Math.Max(40d, fontSizeTwips * widthFactor);
         }
 
-        private static int EstimateParagraphAdvanceTwips(ParagraphModel paragraph, int paragraphContentHeightTwips)
+        private static int EstimateParagraphAdvanceTwips(ParagraphModel paragraph, int paragraphContentHeightTwips, bool constrainSpacing = false)
         {
-            return paragraph.Properties.SpacingBeforeTwips + paragraphContentHeightTwips + paragraph.Properties.SpacingAfterTwips;
+            int spacingBeforeTwips = constrainSpacing ? Math.Max(0, paragraph.Properties.SpacingBeforeTwips) : paragraph.Properties.SpacingBeforeTwips;
+            int spacingAfterTwips = constrainSpacing ? Math.Max(0, paragraph.Properties.SpacingAfterTwips) : paragraph.Properties.SpacingAfterTwips;
+            return spacingBeforeTwips + paragraphContentHeightTwips + spacingAfterTwips;
         }
 
         private static int BuildFloatingLayoutFlags(OfficeArtPictureDescriptor picture)
