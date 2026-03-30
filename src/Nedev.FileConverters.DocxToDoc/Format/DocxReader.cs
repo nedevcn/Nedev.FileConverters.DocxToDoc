@@ -858,6 +858,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 {
                                     currentRowHorizontalMergeAnchor.Width = Math.Max(0, currentRowHorizontalMergeAnchor.Width) + mergedWidth;
                                 }
+                                else if (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct &&
+                                         currentRowHorizontalMergeAnchor.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct &&
+                                         currentCell.Width > 0)
+                                {
+                                    currentRowHorizontalMergeAnchor.Width = Math.Max(0, currentRowHorizontalMergeAnchor.Width) + currentCell.Width;
+                                }
 
                                 currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);
                                 if (currentRow.Cells.Count > 0 && ReferenceEquals(currentRow.Cells[currentRow.Cells.Count - 1], currentCell))
@@ -1567,6 +1573,12 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 if (mergedWidth > 0)
                                 {
                                     currentRowHorizontalMergeAnchor.Width = Math.Max(0, currentRowHorizontalMergeAnchor.Width) + mergedWidth;
+                                }
+                                else if (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct &&
+                                         currentRowHorizontalMergeAnchor.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct &&
+                                         currentCell.Width > 0)
+                                {
+                                    currentRowHorizontalMergeAnchor.Width = Math.Max(0, currentRowHorizontalMergeAnchor.Width) + currentCell.Width;
                                 }
 
                                 currentRowGridColumnIndex += Math.Max(1, currentCell.GridSpan);

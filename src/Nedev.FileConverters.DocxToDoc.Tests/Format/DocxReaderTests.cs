@@ -1567,6 +1567,38 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithHorizontalMergeWithoutGrid_AccumulatesPctWidthWhenAnchorIsPct()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                             "<w:tbl><w:tr>" +
+                             "<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"pct\"/><w:hMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:tcPr><w:tcW w:w=\"1500\" w:type=\"pct\"/><w:hMerge/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>" +
+                             "<w:tc><w:tcPr><w:tcW w:w=\"500\" w:type=\"pct\"/></w:tcPr><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc>" +
+                             "</w:tr></w:tbl></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(Assert.Single(model.Content));
+            var row = Assert.Single(table.Rows);
+            Assert.Equal(2, row.Cells.Count);
+            Assert.Equal(2, row.Cells[0].GridSpan);
+            Assert.Equal(Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct, row.Cells[0].WidthUnit);
+            Assert.Equal(3500, row.Cells[0].Width);
+            Assert.Equal(500, row.Cells[1].Width);
+        }
+
+        [Fact]
         public void ReadDocument_WithMixedGridSpanAndCellMargins_ParsesDerivedWidthsAndPadding()
         {
             using var ms = new MemoryStream();
