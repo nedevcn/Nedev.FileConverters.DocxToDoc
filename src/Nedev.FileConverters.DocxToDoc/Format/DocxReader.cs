@@ -848,7 +848,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 {
                                     mergedWidth = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
                                 }
-                                else if (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa)
+                                if (mergedWidth <= 0 && currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa)
                                 {
                                     mergedWidth = currentCell.Width;
                                 }
@@ -1558,7 +1558,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 {
                                     mergedWidth = ResolveGridWidth(currentTable.GridColumnWidths, currentRowGridColumnIndex, currentCell.GridSpan);
                                 }
-                                else if (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa)
+                                if (mergedWidth <= 0 && currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa)
                                 {
                                     mergedWidth = currentCell.Width;
                                 }
