@@ -67,7 +67,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             // Track inline picture blocks written to the Data stream.
             var embeddedObjects = new List<byte[]>();
             var officeArtBlips = new List<(int cp, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)>();
+            var headerOfficeArtBlips = new List<(int cp, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)>();
             var fieldEntries = new List<(int cp, ushort descriptor)>();
+            var headerFieldEntries = new List<(int cp, ushort descriptor)>();
             int nextPictureOffset = 0;
 
             // 1. Build the text buffer and formatting structures in one pass
@@ -75,7 +77,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             var chpxWriter = new ChpxFkpWriter();
             var papxWriter = new PapxFkpWriter();
             var tapxWriter = new TapxFkpWriter();
-            var layoutSection = model.Sections.Count > 0 ? model.Sections[0] : new SectionModel();
+            var sections = model.Sections.Count > 0 ? model.Sections : new List<SectionModel> { new SectionModel() };
+            var layoutSection = sections[0];
             int documentAvailableWidthTwips = Math.Max(1440, layoutSection.PageWidth - layoutSection.MarginLeft - layoutSection.MarginRight);
             int paragraphVerticalCursorTwips = layoutSection.MarginTop;
             
@@ -128,17 +131,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return left.index.CompareTo(right.index);
             });
 
-            var supportedComments = new List<(CommentModel comment, int index)>();
-            for (int commentIndex = 0; commentIndex < model.Comments.Count; commentIndex++)
-            {
-                var comment = model.Comments[commentIndex];
-                if (!CanWriteComment(comment))
-                {
-                    continue;
-                }
-
-                supportedComments.Add((comment, commentIndex));
-            }
+            var supportedComments = BuildSupportedComments(model.Comments);
 
             supportedComments.Sort(static (left, right) =>
             {
@@ -162,7 +155,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int nextEndnoteIndex = 0;
             var emittedEndnotes = new List<(EndnoteModel endnote, int referenceCp)>(supportedEndnotes.Count);
             int nextCommentIndex = 0;
-            var emittedComments = new List<(CommentModel comment, int referenceCp)>(supportedComments.Count);
+            var emittedComments = new List<(CommentModel comment, int referenceCp, string storyText)>(supportedComments.Count);
 
             void EmitFootnoteReference(FootnoteModel footnote)
             {
@@ -218,7 +211,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 textBuilder.Append('\x0005');
                 chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
-                emittedComments.Add((comment, currentCp));
+                string storyText = supportedComments[nextCommentIndex].storyText;
+                emittedComments.Add((comment, currentCp, storyText));
                 currentCp += 1;
             }
 
@@ -330,7 +324,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                         }
 
                         AppendFieldCharacter('\x0013');
-                        AppendNonVisibleText(BuildHyperlinkInstruction(hyperlink));
+                        AppendNonVisibleText(BuildHyperlinkInstructionCore(hyperlink));
                         AppendFieldCharacter('\x0014');
 
                         for (int hyperlinkRunIndex = hyperlinkStart; hyperlinkRunIndex <= runIndex; hyperlinkRunIndex++)
@@ -519,21 +513,6 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     AppendFormattedRunText(runModel);
                 }
 
-                static string BuildHyperlinkInstruction(HyperlinkModel hyperlinkModel)
-                {
-                    if (!string.IsNullOrWhiteSpace(hyperlinkModel.TargetUrl))
-                    {
-                        return $"HYPERLINK \"{hyperlinkModel.TargetUrl}\"";
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(hyperlinkModel.Anchor))
-                    {
-                        return $"HYPERLINK \\l \"{hyperlinkModel.Anchor}\"";
-                    }
-
-                    return "HYPERLINK";
-                }
-
                 static ushort BuildFieldDescriptor(char marker, FieldModel? fieldModel, int nestingDepth)
                 {
                     ushort descriptor = marker;
@@ -595,6 +574,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         FieldType.Page => "PAGE",
                         FieldType.NumPages => "NUMPAGES",
+                        FieldType.SectionPages => "SECTIONPAGES",
                         FieldType.Date => "DATE",
                         FieldType.Time => "TIME",
                         FieldType.Author => "AUTHOR",
@@ -642,6 +622,107 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
 
+            void ProcessTable(TableModel table, ref int verticalCursorTwips, int availableWidthTwips)
+            {
+                for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+                {
+                    var row = table.Rows[rowIndex];
+                    var previousRow = rowIndex > 0 ? table.Rows[rowIndex - 1] : null;
+                    int rowHeightTwips = 0;
+                    int rowGridColumnIndex = 0;
+                    int totalColumnCount = ResolveTableTotalColumnCount(table, row);
+                    int tableAvailableWidthTwips = ResolveTableAvailableWidthTwips(table, row, availableWidthTwips, totalColumnCount);
+                    var resolvedRowWidthsTwips = ResolveRowCellWidthsTwips(table, row, tableAvailableWidthTwips, totalColumnCount);
+                    var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int bottomOffsetTwips, int verticalOffsetTwips)>();
+                    for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
+                    {
+                        var cell = row.Cells[cellIndex];
+                        int cellStartColumnIndex = rowGridColumnIndex;
+                        int cellSpan = Math.Max(1, cell.GridSpan);
+                        bool isFirstRow = rowIndex == 0;
+                        bool isLastRow = rowIndex == table.Rows.Count - 1;
+                        bool isFirstColumn = cellStartColumnIndex == 0;
+                        bool isLastColumn = cellStartColumnIndex + cellSpan >= totalColumnCount;
+                        var previousCell = cellIndex > 0 ? row.Cells[cellIndex - 1] : null;
+                        int resolvedCellWidthTwips = cellIndex < resolvedRowWidthsTwips.Count ? resolvedRowWidthsTwips[cellIndex] : 0;
+                        int effectiveCellWidthTwips = resolvedCellWidthTwips > 0 ? resolvedCellWidthTwips : tableAvailableWidthTwips;
+                        int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, previousCell, isFirstColumn);
+                        int rightBorderTwips = ResolveTableCellRightBorderTwips(table, cell, isLastColumn);
+                        int topBorderTwips = ResolveTableCellTopBorderTwips(table, cell, previousRow, cellStartColumnIndex, cellSpan, isFirstRow);
+                        int bottomBorderTwips = ResolveTableCellBottomBorderTwips(table, cell, isLastRow);
+                        int topPaddingTwips = ResolveTableCellTopPaddingTwips(table, cell);
+                        int bottomPaddingTwips = ResolveTableCellBottomPaddingTwips(table, cell);
+                        int topCellSpacingTwips = ResolveTableCellTopSpacingTwips(table);
+                        int bottomCellSpacingTwips = ResolveTableCellBottomSpacingTwips(table);
+                        int horizontalCellBorderTwips = Math.Max(0, leftBorderTwips) + Math.Max(0, rightBorderTwips);
+                        int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
+                        int horizontalCellSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
+                        int cellAvailableWidthTwips = Math.Max(720, effectiveCellWidthTwips - horizontalCellBorderTwips - horizontalCellPaddingTwips - horizontalCellSpacingTwips);
+                        int cellContentHeightTwips = EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips);
+                        int cellTotalHeightTwips = topCellSpacingTwips + topBorderTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips;
+                        rowGridColumnIndex += cellSpan;
+                        rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
+                        cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topCellSpacingTwips + topBorderTwips + topPaddingTwips, bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips, 0));
+                    }
+
+                    rowHeightTwips = ResolveRowHeightTwips(row, rowHeightTwips);
+
+                    for (int cellIndex = 0; cellIndex < cellLayouts.Count; cellIndex++)
+                    {
+                        var cellLayout = cellLayouts[cellIndex];
+                        int verticalOffsetTwips = ResolveTableCellVerticalAlignmentOffset(cellLayout.cell, rowHeightTwips, cellLayout.totalHeightTwips);
+                        cellLayouts[cellIndex] = (cellLayout.cell, cellLayout.availableWidthTwips, cellLayout.totalHeightTwips, cellLayout.topOffsetTwips, cellLayout.bottomOffsetTwips, verticalOffsetTwips);
+                    }
+
+                    foreach (var cellLayout in cellLayouts)
+                    {
+                        int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
+                        int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
+                        foreach (var cellBlock in EnumerateTableCellBlocks(cellLayout.cell))
+                        {
+                            if (cellBlock is ParagraphModel cellParagraph)
+                            {
+                                ProcessParagraph(cellParagraph, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips, row.HeightRule == TableRowHeightRule.Exact ? maxVisibleCursorTwips : null);
+                            }
+                            else if (cellBlock is TableModel nestedTable)
+                            {
+                                ProcessTable(nestedTable, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips);
+                                if (row.HeightRule == TableRowHeightRule.Exact)
+                                {
+                                    cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
+                                }
+                            }
+                        }
+
+                        int cellMarkStart = currentCp;
+                        textBuilder.Append('\x0007');
+                        currentCp += 1;
+
+                        List<byte> cellMarkSprms = new List<byte>();
+                        cellMarkSprms.Add(0x16); cellMarkSprms.Add(0x24); cellMarkSprms.Add(1);
+                        papxWriter.AddParagraph(cellMarkStart, currentCp, cellMarkSprms.ToArray());
+                    }
+
+                    int rowMarkStart = currentCp;
+                    textBuilder.Append('\r');
+
+                    List<byte> rowParaSprms = new List<byte>();
+                    rowParaSprms.Add(0x16); rowParaSprms.Add(0x24); rowParaSprms.Add(1);
+                    rowParaSprms.Add(0x17); rowParaSprms.Add(0x24); rowParaSprms.Add(1);
+
+                    papxWriter.AddParagraph(rowMarkStart, currentCp + 1, rowParaSprms.ToArray());
+                    currentCp += 1;
+
+                    List<byte> tapSprms = new List<byte>();
+                    tapSprms.Add(0x08); tapSprms.Add(0xD6);
+                    byte[] defTable = new byte[10] { 0x08, (byte)row.Cells.Count, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    tapSprms.AddRange(defTable);
+
+                    tapxWriter.AddRow(rowMarkStart, currentCp, tapSprms.ToArray());
+                    verticalCursorTwips += rowHeightTwips;
+                }
+            }
+
             foreach (var item in model.Content)
             {
                 if (item is ParagraphModel para)
@@ -650,111 +731,365 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
                 else if (item is TableModel table)
                 {
-                    for (int rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
-                    {
-                        var row = table.Rows[rowIndex];
-                        var previousRow = rowIndex > 0 ? table.Rows[rowIndex - 1] : null;
-                        int rowStart = currentCp;
-                        int rowHeightTwips = 0;
-                        int rowGridColumnIndex = 0;
-                        int totalColumnCount = ResolveTableTotalColumnCount(table, row);
-                        int tableAvailableWidthTwips = ResolveTableAvailableWidthTwips(table, row, documentAvailableWidthTwips, totalColumnCount);
-                        var resolvedRowWidthsTwips = ResolveRowCellWidthsTwips(table, row, tableAvailableWidthTwips, totalColumnCount);
-                        var cellLayouts = new List<(TableCellModel cell, int availableWidthTwips, int totalHeightTwips, int topOffsetTwips, int bottomOffsetTwips, int verticalOffsetTwips)>();
-                        for (int cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
-                        {
-                            var cell = row.Cells[cellIndex];
-                            int cellStartColumnIndex = rowGridColumnIndex;
-                            int cellSpan = Math.Max(1, cell.GridSpan);
-                            bool isFirstRow = rowIndex == 0;
-                            bool isLastRow = rowIndex == table.Rows.Count - 1;
-                            bool isFirstColumn = cellStartColumnIndex == 0;
-                            bool isLastColumn = cellStartColumnIndex + cellSpan >= totalColumnCount;
-                            var previousCell = cellIndex > 0 ? row.Cells[cellIndex - 1] : null;
-                            int resolvedCellWidthTwips = cellIndex < resolvedRowWidthsTwips.Count ? resolvedRowWidthsTwips[cellIndex] : 0;
-                            int effectiveCellWidthTwips = resolvedCellWidthTwips > 0 ? resolvedCellWidthTwips : tableAvailableWidthTwips;
-                            int leftBorderTwips = ResolveTableCellLeftBorderTwips(table, cell, previousCell, isFirstColumn);
-                            int rightBorderTwips = ResolveTableCellRightBorderTwips(table, cell, isLastColumn);
-                            int topBorderTwips = ResolveTableCellTopBorderTwips(table, cell, previousRow, cellStartColumnIndex, cellSpan, isFirstRow);
-                            int bottomBorderTwips = ResolveTableCellBottomBorderTwips(table, cell, isLastRow);
-                            int topPaddingTwips = ResolveTableCellTopPaddingTwips(table, cell);
-                            int bottomPaddingTwips = ResolveTableCellBottomPaddingTwips(table, cell);
-                            int topCellSpacingTwips = ResolveTableCellTopSpacingTwips(table);
-                            int bottomCellSpacingTwips = ResolveTableCellBottomSpacingTwips(table);
-                            int horizontalCellBorderTwips = Math.Max(0, leftBorderTwips) + Math.Max(0, rightBorderTwips);
-                            int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
-                            int horizontalCellSpacingTwips = ResolveTableCellHorizontalSpacingTwips(table);
-                            int cellAvailableWidthTwips = Math.Max(720, effectiveCellWidthTwips - horizontalCellBorderTwips - horizontalCellPaddingTwips - horizontalCellSpacingTwips);
-                            int cellContentHeightTwips = EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips);
-                            int cellTotalHeightTwips = topCellSpacingTwips + topBorderTwips + topPaddingTwips + cellContentHeightTwips + bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips;
-                            rowGridColumnIndex += cellSpan;
-                            rowHeightTwips = Math.Max(rowHeightTwips, cellTotalHeightTwips);
-                            cellLayouts.Add((cell, cellAvailableWidthTwips, cellTotalHeightTwips, topCellSpacingTwips + topBorderTwips + topPaddingTwips, bottomPaddingTwips + bottomBorderTwips + bottomCellSpacingTwips, 0));
-                        }
-
-                        rowHeightTwips = ResolveRowHeightTwips(row, rowHeightTwips);
-
-                        for (int cellIndex = 0; cellIndex < cellLayouts.Count; cellIndex++)
-                        {
-                            var cellLayout = cellLayouts[cellIndex];
-                            int verticalOffsetTwips = ResolveTableCellVerticalAlignmentOffset(cellLayout.cell, rowHeightTwips, cellLayout.totalHeightTwips);
-                            cellLayouts[cellIndex] = (cellLayout.cell, cellLayout.availableWidthTwips, cellLayout.totalHeightTwips, cellLayout.topOffsetTwips, cellLayout.bottomOffsetTwips, verticalOffsetTwips);
-                        }
-
-                        foreach (var cellLayout in cellLayouts)
-                        {
-                            int cellVerticalCursorTwips = cellLayout.topOffsetTwips + cellLayout.verticalOffsetTwips;
-                            int maxVisibleCursorTwips = Math.Max(cellLayout.topOffsetTwips, rowHeightTwips - cellLayout.bottomOffsetTwips);
-                            foreach (var cellPara in cellLayout.cell.Paragraphs)
-                            {
-                                ProcessParagraph(cellPara, ref cellVerticalCursorTwips, cellLayout.availableWidthTwips, row.HeightRule == TableRowHeightRule.Exact ? maxVisibleCursorTwips : null);
-                                if (row.HeightRule == TableRowHeightRule.Exact)
-                                {
-                                    cellVerticalCursorTwips = Math.Min(cellVerticalCursorTwips, maxVisibleCursorTwips);
-                                }
-                            }
-
-                            // Cell Mark - treated as a paragraph terminator in MS-DOC
-                            int cellMarkStart = currentCp;
-                            textBuilder.Append('\x0007');
-                            currentCp += 1;
-                            
-                            // Cell marks need PAPX entries with sprmPFInTable
-                            List<byte> cellMarkSprms = new List<byte>();
-                            cellMarkSprms.Add(0x16); cellMarkSprms.Add(0x24); cellMarkSprms.Add(1); // sprmPFInTable = 1
-                            papxWriter.AddParagraph(cellMarkStart, currentCp, cellMarkSprms.ToArray());
-                        }
-                        // Row Mark Paragraph
-                        int rowMarkStart = currentCp;
-                        textBuilder.Append('\r');
-                        
-                        List<byte> rowParaSprms = new List<byte>();
-                        rowParaSprms.Add(0x16); rowParaSprms.Add(0x24); rowParaSprms.Add(1); // sprmPFTable = 1
-                        rowParaSprms.Add(0x17); rowParaSprms.Add(0x24); rowParaSprms.Add(1); // sprmPFTermInTbl = 1
-                        
-                        papxWriter.AddParagraph(rowMarkStart, currentCp + 1, rowParaSprms.ToArray());
-                        currentCp += 1;
-                        
-                        // Build TAP (Table Properties) for this row
-                        List<byte> tapSprms = new List<byte>();
-                        // sprmTDefTable (0xD608) - minimal definition
-                        tapSprms.Add(0x08); tapSprms.Add(0xD6);
-                        // Complex operand shortened for now
-                        byte[] defTable = new byte[10] { 0x08, (byte)row.Cells.Count, 0, 0, 0, 0, 0, 0, 0, 0 };
-                        tapSprms.AddRange(defTable);
-                        
-                        tapxWriter.AddRow(rowStart, currentCp, tapSprms.ToArray());
-                        paragraphVerticalCursorTwips += rowHeightTwips;
-                    }
+                    ProcessTable(table, ref paragraphVerticalCursorTwips, documentAvailableWidthTwips);
                 }
             }
 
+            void AppendStructuredHeaderFooterStory(HeaderFooterStoryModel story, SectionModel? storySection, ref int storyLength, List<int> storyStarts)
+            {
+                storyStarts.Add(storyLength);
+                IReadOnlyList<object> storyBlocks = story.Content.Count > 0
+                    ? story.Content
+                    : story.Paragraphs.ConvertAll(static paragraph => (object)paragraph);
+                int storyAvailableWidthTwips = storySection != null
+                    ? Math.Max(1440, storySection.PageWidth - storySection.MarginLeft - storySection.MarginRight)
+                    : 9360;
+                int storyVerticalCursorTwips = storySection?.MarginTop ?? 0;
+
+                if (storyBlocks.Count == 0)
+                {
+                    AppendHeaderParagraphMark(ref storyLength);
+                    AppendHeaderParagraphMark(ref storyLength);
+                    return;
+                }
+
+                foreach (var block in storyBlocks)
+                {
+                    if (block is ParagraphModel paragraph)
+                    {
+                        int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, storyAvailableWidthTwips);
+                        int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
+                        int paragraphTopTwips = storyVerticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
+                        AppendStructuredHeaderFooterParagraph(paragraph, storySection, paragraphTopTwips, paragraphContentHeightTwips, ref storyLength, inTable: false);
+                        storyVerticalCursorTwips += EstimateParagraphAdvanceTwips(paragraph, paragraphContentHeightTwips);
+                    }
+                    else if (block is TableModel table)
+                    {
+                        AppendStructuredHeaderFooterTable(table, storySection, storyAvailableWidthTwips, ref storyVerticalCursorTwips, ref storyLength);
+                    }
+                }
+
+                AppendHeaderParagraphMark(ref storyLength);
+
+                void AppendStructuredHeaderFooterTable(TableModel table, SectionModel? layoutSectionForStory, int tableAvailableWidthTwips, ref int verticalCursorTwips, ref int localStoryLength)
+                {
+                    foreach (var row in table.Rows)
+                    {
+                        int rowHeightTwips = 0;
+                        int gridColumnIndex = 0;
+
+                        foreach (var cell in row.Cells)
+                        {
+                            int gridSpan = Math.Max(1, cell.GridSpan);
+                            int cellWidthTwips = cell.Width > 0
+                                ? cell.Width
+                                : ResolveTableCellWidth(table, gridColumnIndex, gridSpan, tableAvailableWidthTwips);
+                            int horizontalCellPaddingTwips = ResolveTableCellHorizontalPaddingTwips(table, cell);
+                            int cellAvailableWidthTwips = Math.Max(720, cellWidthTwips - horizontalCellPaddingTwips);
+                            rowHeightTwips = Math.Max(rowHeightTwips, EstimateTableCellContentHeightTwips(cell, cellAvailableWidthTwips));
+                            foreach (var cellBlock in EnumerateTableCellBlocks(cell))
+                            {
+                                if (cellBlock is ParagraphModel paragraph)
+                                {
+                                    int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellAvailableWidthTwips);
+                                    int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
+                                    int paragraphTopTwips = verticalCursorTwips + paragraph.Properties.SpacingBeforeTwips;
+                                    AppendStructuredHeaderFooterParagraph(paragraph, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength, inTable: true);
+                                }
+                                else if (cellBlock is TableModel nestedTable)
+                                {
+                                    AppendStructuredHeaderFooterTable(nestedTable, layoutSectionForStory, cellAvailableWidthTwips, ref verticalCursorTwips, ref localStoryLength);
+                                }
+                            }
+
+                            int cellMarkStart = currentCp;
+                            textBuilder.Append('\x0007');
+                            currentCp += 1;
+                            localStoryLength += 1;
+
+                            List<byte> cellMarkSprms = new List<byte>();
+                            cellMarkSprms.Add(0x16);
+                            cellMarkSprms.Add(0x24);
+                            cellMarkSprms.Add(1);
+                            papxWriter.AddParagraph(cellMarkStart, currentCp, cellMarkSprms.ToArray());
+                            gridColumnIndex += gridSpan;
+                        }
+
+                        int rowMarkStart = currentCp;
+                        textBuilder.Append('\r');
+                        localStoryLength += 1;
+
+                        List<byte> rowParaSprms = new List<byte>();
+                        rowParaSprms.Add(0x16); rowParaSprms.Add(0x24); rowParaSprms.Add(1);
+                        rowParaSprms.Add(0x17); rowParaSprms.Add(0x24); rowParaSprms.Add(1);
+
+                        papxWriter.AddParagraph(rowMarkStart, currentCp + 1, rowParaSprms.ToArray());
+                        currentCp += 1;
+
+                        List<byte> tapSprms = new List<byte>();
+                        tapSprms.Add(0x08); tapSprms.Add(0xD6);
+                        byte[] defTable = new byte[10] { 0x08, (byte)row.Cells.Count, 0, 0, 0, 0, 0, 0, 0, 0 };
+                        tapSprms.AddRange(defTable);
+
+                        tapxWriter.AddRow(rowMarkStart, currentCp, tapSprms.ToArray());
+                        verticalCursorTwips += Math.Max(276, rowHeightTwips);
+                    }
+                }
+
+                void AppendStructuredHeaderFooterParagraph(ParagraphModel paragraph, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength, bool inTable)
+                {
+                    int paragraphStart = currentCp;
+                    var autoCompletedFields = new HashSet<FieldModel>();
+                    var separatedFields = new HashSet<FieldModel>();
+                    var openFields = new List<FieldModel>();
+
+                    for (int runIndex = 0; runIndex < paragraph.Runs.Count; runIndex++)
+                    {
+                        var run = paragraph.Runs[runIndex];
+                        if (run.Hyperlink != null)
+                        {
+                            int hyperlinkStart = runIndex;
+                            var hyperlink = run.Hyperlink;
+                            while (runIndex + 1 < paragraph.Runs.Count && ReferenceEquals(paragraph.Runs[runIndex + 1].Hyperlink, hyperlink))
+                            {
+                                runIndex++;
+                            }
+
+                            AppendHeaderFieldCharacter('\x0013', ref localStoryLength);
+                            AppendHeaderNonVisibleText(BuildHyperlinkInstructionCore(hyperlink));
+                            AppendHeaderFieldCharacter('\x0014', ref localStoryLength);
+
+                            for (int hyperlinkRunIndex = hyperlinkStart; hyperlinkRunIndex <= runIndex; hyperlinkRunIndex++)
+                            {
+                                AppendHeaderVisibleRunContent(paragraph.Runs[hyperlinkRunIndex], layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength);
+                            }
+
+                            AppendHeaderFieldCharacter('\x0015', ref localStoryLength);
+                            continue;
+                        }
+
+                        if (run.IsFieldBegin &&
+                            run.Field != null &&
+                            !HasExplicitFieldBoundaryCore(paragraph.Runs, runIndex + 1, run.Field))
+                        {
+                            int fieldDepth = openFields.Count;
+                            AppendHeaderFieldCharacter('\x0013', ref localStoryLength, run.Field, fieldDepth);
+
+                            string instruction = ResolveFieldInstructionCore(run.Field);
+                            AppendHeaderNonVisibleText(instruction);
+
+                            if (!string.IsNullOrEmpty(run.Field.Result))
+                            {
+                                AppendHeaderFieldCharacter('\x0014', ref localStoryLength, run.Field, fieldDepth);
+                                separatedFields.Add(run.Field);
+                                AppendHeaderVisibleText(run.Field.Result, ref localStoryLength);
+                            }
+
+                            AppendHeaderFieldCharacter('\x0015', ref localStoryLength, run.Field, fieldDepth);
+                            autoCompletedFields.Add(run.Field);
+                            continue;
+                        }
+
+                        if (run.IsFieldBegin)
+                        {
+                            AppendHeaderFieldCharacter('\x0013', ref localStoryLength, run.Field, openFields.Count);
+                            if (run.Field != null)
+                            {
+                                openFields.Add(run.Field);
+                            }
+                            continue;
+                        }
+
+                        if (run.Field != null &&
+                            !run.IsFieldSeparate &&
+                            !run.IsFieldEnd &&
+                            run.Text.Length == 0 &&
+                            !string.IsNullOrEmpty(run.Field.Instruction))
+                        {
+                            AppendHeaderNonVisibleText(run.Field.Instruction);
+                            continue;
+                        }
+
+                        if (run.IsFieldSeparate)
+                        {
+                            AppendHeaderFieldCharacter('\x0014', ref localStoryLength, run.Field, GetFieldDepthCore(openFields, run.Field));
+                            if (run.Field != null)
+                            {
+                                separatedFields.Add(run.Field);
+                            }
+                            continue;
+                        }
+
+                        if (run.IsFieldEnd)
+                        {
+                            int fieldDepth = GetFieldDepthCore(openFields, run.Field);
+                            if (run.Field != null &&
+                                !autoCompletedFields.Contains(run.Field) &&
+                                !separatedFields.Contains(run.Field) &&
+                                !string.IsNullOrEmpty(run.Field.Result))
+                            {
+                                AppendHeaderFieldCharacter('\x0014', ref localStoryLength, run.Field, fieldDepth);
+                                separatedFields.Add(run.Field);
+                                AppendHeaderVisibleText(run.Field.Result, ref localStoryLength);
+                            }
+
+                            AppendHeaderFieldCharacter('\x0015', ref localStoryLength, run.Field, fieldDepth);
+                            if (run.Field != null)
+                            {
+                                RemoveLastOpenFieldCore(openFields, run.Field);
+                            }
+                            continue;
+                        }
+
+                        AppendHeaderVisibleRunContent(run, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength);
+                    }
+
+                    for (int index = openFields.Count - 1; index >= 0; index--)
+                    {
+                        var openField = openFields[index];
+                        int fieldDepth = index;
+                        if (!separatedFields.Contains(openField) && !string.IsNullOrEmpty(openField.Result))
+                        {
+                            AppendHeaderFieldCharacter('\x0014', ref localStoryLength, openField, fieldDepth);
+                            AppendHeaderVisibleText(openField.Result, ref localStoryLength);
+                        }
+
+                        AppendHeaderFieldCharacter('\x0015', ref localStoryLength, openField, fieldDepth);
+                    }
+
+                    AppendHeaderVisibleText("\r", ref localStoryLength);
+
+                    List<byte> paragraphSprms = new List<byte>();
+                    AppendParagraphFormattingSprms(paragraphSprms, paragraph.Properties);
+                    if (inTable)
+                    {
+                        paragraphSprms.Add(0x16);
+                        paragraphSprms.Add(0x24);
+                        paragraphSprms.Add(1);
+                    }
+
+                    papxWriter.AddParagraph(paragraphStart, currentCp, paragraphSprms.ToArray());
+                }
+
+                void AppendHeaderParagraphMark(ref int localStoryLength)
+                {
+                    int paragraphStart = currentCp;
+                    textBuilder.Append('\r');
+                    currentCp += 1;
+                    localStoryLength += 1;
+                    papxWriter.AddParagraph(paragraphStart, currentCp, Array.Empty<byte>());
+                }
+
+                void AppendHeaderNonVisibleText(string text)
+                {
+                    if (string.IsNullOrEmpty(text))
+                    {
+                        return;
+                    }
+
+                    textBuilder.Append(text);
+                }
+
+                void AppendHeaderVisibleText(string text, ref int localStoryLength, byte[]? runSprms = null)
+                {
+                    if (string.IsNullOrEmpty(text))
+                    {
+                        return;
+                    }
+
+                    int startCp = currentCp;
+                    textBuilder.Append(text);
+                    currentCp += text.Length;
+                    localStoryLength += text.Length;
+
+                    if (runSprms != null && runSprms.Length > 0)
+                    {
+                        chpxWriter.AddRun(startCp, currentCp, runSprms);
+                    }
+                }
+
+                void AppendHeaderFieldCharacter(char marker, ref int localStoryLength, FieldModel? fieldModel = null, int nestingDepth = 0)
+                {
+                    textBuilder.Append(marker);
+                    headerFieldEntries.Add((localStoryLength, BuildFieldDescriptorCore(marker, fieldModel, nestingDepth)));
+                    chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
+                    currentCp += 1;
+                    localStoryLength += 1;
+                }
+
+                void AppendHeaderVisibleRunContent(RunModel runModel, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength)
+                {
+                    AppendHeaderImageRunContent(runModel, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips, ref localStoryLength);
+
+                    if (runModel.Text.Length == 0)
+                    {
+                        return;
+                    }
+
+                    byte[] runSprms = BuildRunSprms(runModel.Properties, model.Fonts);
+                    AppendHeaderVisibleText(runModel.Text, ref localStoryLength, runSprms.Length > 0 ? runSprms : null);
+                }
+
+                void AppendHeaderImageRunContent(RunModel runModel, SectionModel? layoutSectionForStory, int paragraphTopTwips, int paragraphContentHeightTwips, ref int localStoryLength)
+                {
+                    if (runModel.Image == null ||
+                        runModel.Image.Data == null)
+                    {
+                        return;
+                    }
+
+                    string imageContentType = ResolveImageContentType(runModel.Image.ContentType, runModel.Image.Data);
+                    int localPictureCp = localStoryLength;
+
+                    textBuilder.Append('\x0001');
+
+                    byte[] pictureBlock = BuildPictureBlock(runModel.Image, imageContentType);
+                    int pictureOffset = nextPictureOffset;
+                    nextPictureOffset += pictureBlock.Length;
+                    embeddedObjects.Add(pictureBlock);
+
+                    if (runModel.Image.LayoutType == ImageLayoutType.Floating &&
+                        layoutSectionForStory != null &&
+                        SupportsOfficeArtBlip(imageContentType))
+                    {
+                        (int imageWidthTwips, int imageHeightTwips) = ResolveImageDimensionsTwips(runModel.Image, imageContentType);
+                        (int leftTwips, int topTwips, _, _) = ResolveImageBoundsTwips(runModel.Image, imageContentType, layoutSectionForStory, paragraphTopTwips, paragraphContentHeightTwips);
+                        headerOfficeArtBlips.Add((localPictureCp, runModel.Image.Data, imageContentType, imageWidthTwips, imageHeightTwips, leftTwips, topTwips, runModel.Image.WrapType, runModel.Image.BehindText, runModel.Image.AllowOverlap, runModel.Image.HorizontalRelativeTo, runModel.Image.VerticalRelativeTo));
+                    }
+
+                    chpxWriter.AddRun(currentCp, currentCp + 1, BuildImageSprms(pictureOffset));
+                    currentCp += 1;
+                    localStoryLength += 1;
+                }
+            }
+
+            void AppendResolvedHeaderFooterStory(
+                HeaderFooterStoryModel? story,
+                string? text,
+                SectionModel? section,
+                ref int storyLength,
+                List<int> storyStarts)
+            {
+                if (story != null)
+                {
+                    AppendStructuredHeaderFooterStory(story, section, ref storyLength, storyStarts);
+                    return;
+                }
+
+                AppendHeaderFooterStoryText(textBuilder, ref currentCp, ref storyLength, storyStarts, text, papxWriter);
+            }
+
+            int trailingReferenceStart = currentCp;
             AppendPendingFootnoteReferencesAtVisibleCp();
             AppendPendingEndnoteReferencesAtVisibleCp();
             AppendPendingCommentReferencesAtVisibleCp();
             AppendRemainingFootnoteReferencesAtDocumentEnd();
             AppendRemainingEndnoteReferencesAtDocumentEnd();
             AppendRemainingCommentReferencesAtDocumentEnd();
+            if (currentCp > trailingReferenceStart)
+            {
+                papxWriter.AddParagraph(trailingReferenceStart, currentCp, Array.Empty<byte>());
+            }
 
             int mainDocumentCp = currentCp;
             int footnoteStoryLength = 0;
@@ -763,37 +1098,53 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 var (footnote, _) = emittedFootnotes[footnoteIndex];
                 footnoteTextStoryStarts.Add(footnoteStoryLength);
+                int paragraphStart = currentCp;
 
                 AppendNoteReferenceMarker(textBuilder, chpxWriter, ref currentCp, ref footnoteStoryLength, footnote.CustomMarkText);
 
-                AppendSecondaryStoryText(textBuilder, ref currentCp, ref footnoteStoryLength, footnote.Text);
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref footnoteStoryLength, footnote.Text, papxWriter, paragraphStart);
             }
 
             int headerStoryLength = 0;
-            var headerStoryStarts = new List<int>(8);
-            if (HasExplicitHeaderStories(model))
+            bool hasSectionHeaderFooterStories = HasSectionHeaderFooterStories(model, sections);
+            var headerStoryStarts = new List<int>(hasSectionHeaderFooterStories ? 6 + (sections.Count * 6) : 8);
+            if (HasExplicitHeaderStories(model, sections))
             {
-                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteSeparatorText);
-                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteContinuationSeparatorText);
-                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteContinuationNoticeText);
-                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteSeparatorText);
-                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteContinuationSeparatorText);
-                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteContinuationNoticeText);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteSeparatorText, papxWriter);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteContinuationSeparatorText, papxWriter);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.FootnoteContinuationNoticeText, papxWriter);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteSeparatorText, papxWriter);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteContinuationSeparatorText, papxWriter);
+                AppendHeaderStoryText(textBuilder, ref currentCp, ref headerStoryLength, headerStoryStarts, model.EndnoteContinuationNoticeText, papxWriter);
+
+                if (hasSectionHeaderFooterStories)
+                {
+                    foreach (var section in sections)
+                    {
+                        AppendResolvedHeaderFooterStory(ResolveEvenPagesHeaderStory(model, section), ResolveEvenPagesHeaderText(model, section), section, ref headerStoryLength, headerStoryStarts);
+                        AppendResolvedHeaderFooterStory(ResolveDefaultHeaderStory(section), ResolveDefaultHeaderText(section), section, ref headerStoryLength, headerStoryStarts);
+                        AppendResolvedHeaderFooterStory(ResolveEvenPagesFooterStory(model, section), ResolveEvenPagesFooterText(model, section), section, ref headerStoryLength, headerStoryStarts);
+                        AppendResolvedHeaderFooterStory(ResolveDefaultFooterStory(section), ResolveDefaultFooterText(section), section, ref headerStoryLength, headerStoryStarts);
+                        AppendResolvedHeaderFooterStory(ResolveFirstPageHeaderStory(section), ResolveFirstPageHeaderText(section), section, ref headerStoryLength, headerStoryStarts);
+                        AppendResolvedHeaderFooterStory(ResolveFirstPageFooterStory(section), ResolveFirstPageFooterText(section), section, ref headerStoryLength, headerStoryStarts);
+                    }
+                }
             }
 
             int commentStoryLength = 0;
             var commentTextStoryStarts = new List<int>(emittedComments.Count + 2);
             for (int commentIndex = 0; commentIndex < emittedComments.Count; commentIndex++)
             {
-                var (comment, _) = emittedComments[commentIndex];
+                var (comment, _, storyText) = emittedComments[commentIndex];
                 commentTextStoryStarts.Add(commentStoryLength);
+                int paragraphStart = currentCp;
 
                 textBuilder.Append('\x0005');
                 chpxWriter.AddRun(currentCp, currentCp + 1, BuildSpecialCharacterSprms());
                 currentCp += 1;
                 commentStoryLength += 1;
 
-                AppendSecondaryStoryText(textBuilder, ref currentCp, ref commentStoryLength, comment.Text);
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref commentStoryLength, storyText, papxWriter, paragraphStart);
             }
 
             int endnoteStoryLength = 0;
@@ -802,10 +1153,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 var (endnote, _) = emittedEndnotes[endnoteIndex];
                 endnoteTextStoryStarts.Add(endnoteStoryLength);
+                int paragraphStart = currentCp;
 
                 AppendNoteReferenceMarker(textBuilder, chpxWriter, ref currentCp, ref endnoteStoryLength, endnote.CustomMarkText);
 
-                AppendSecondaryStoryText(textBuilder, ref currentCp, ref endnoteStoryLength, endnote.Text);
+                AppendSecondaryStoryText(textBuilder, ref currentCp, ref endnoteStoryLength, endnote.Text, papxWriter, paragraphStart);
             }
 
             string finalBaseText = textBuilder.ToString();
@@ -905,21 +1257,36 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbPlcffldMom = (int)tableStream.Position - fcPlcffldMom;
             }
 
-            var officeArtPictures = BuildOfficeArtPictureDescriptors(officeArtBlips);
+            var officeArtPictures = BuildOfficeArtPictureDescriptors(officeArtBlips, 0);
+            var headerOfficeArtPictures = BuildOfficeArtPictureDescriptors(headerOfficeArtBlips, officeArtPictures.Count);
 
             int fcPlcfspaMom = 0;
             int lcbPlcfspaMom = 0;
             if (officeArtPictures.Count > 0)
             {
                 fcPlcfspaMom = (int)tableStream.Position;
-                WritePlcfspaMom(tableWriter, officeArtPictures, mainDocumentCp);
+                WritePlcfspa(tableWriter, officeArtPictures, mainDocumentCp);
                 lcbPlcfspaMom = (int)tableStream.Position - fcPlcfspaMom;
+            }
+
+            int fcPlcSpaHdr = 0;
+            int lcbPlcSpaHdr = 0;
+            if (headerOfficeArtPictures.Count > 0)
+            {
+                fcPlcSpaHdr = (int)tableStream.Position;
+                WritePlcfspa(tableWriter, headerOfficeArtPictures, headerStoryLength);
+                lcbPlcSpaHdr = (int)tableStream.Position - fcPlcSpaHdr;
             }
 
             int fcDggInfo = 0;
             int lcbDggInfo = 0;
-            if (officeArtPictures.Count > 0)
+            if (officeArtPictures.Count > 0 || headerOfficeArtPictures.Count > 0)
             {
+                if (headerOfficeArtPictures.Count > 0)
+                {
+                    officeArtPictures.AddRange(headerOfficeArtPictures);
+                }
+
                 byte[] officeArtContent = BuildOfficeArtContent(officeArtPictures);
                 if (officeArtContent.Length > 0)
                 {
@@ -949,6 +1316,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             int lcbPlcffndTxt = 0;
             int fcPlcfHdd = 0;
             int lcbPlcfHdd = 0;
+            int fcPlcffldHdr = 0;
+            int lcbPlcffldHdr = 0;
             int fcPlcfandRef = 0;
             int lcbPlcfandRef = 0;
             int fcPlcfandTxt = 0;
@@ -1037,16 +1406,33 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbPlcfHdd = (int)tableStream.Position - fcPlcfHdd;
             }
 
+            if (headerFieldEntries.Count > 0)
+            {
+                fcPlcffldHdr = (int)tableStream.Position;
+                foreach (var (cp, _) in headerFieldEntries)
+                {
+                    tableWriter.Write(cp);
+                }
+                tableWriter.Write(headerStoryLength);
+
+                foreach (var (_, descriptor) in headerFieldEntries)
+                {
+                    tableWriter.Write(descriptor);
+                }
+
+                lcbPlcffldHdr = (int)tableStream.Position - fcPlcffldHdr;
+            }
+
             if (emittedComments.Count > 0)
             {
                 fcPlcfandRef = (int)tableStream.Position;
-                foreach (var (_, referenceCp) in emittedComments)
+                foreach (var (_, referenceCp, _) in emittedComments)
                 {
                     tableWriter.Write(referenceCp);
                 }
                 tableWriter.Write(mainDocumentCp);
 
-                foreach (var (comment, _) in emittedComments)
+                foreach (var (comment, _, _) in emittedComments)
                 {
                     WriteAtrdPre10(tableWriter, comment);
                 }
@@ -1094,8 +1480,6 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             // 9. Process section properties: Build Plcfsed and SED/SEP
-            var sections = model.Sections.Count > 0 ? model.Sections : new List<SectionModel> { new SectionModel() };
-            
             // Write SEPs to WordDocument
             List<int> fcSeps = new List<int>();
             wordDocumentStream.Seek(0, SeekOrigin.End);
@@ -1113,12 +1497,23 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     sepSprms.Add(BitConverter.GetBytes((short)val)[1]);
                 }
 
+                void AddByteSprm(ushort op, byte val)
+                {
+                    sepSprms.Add((byte)(op & 0xFF));
+                    sepSprms.Add((byte)((op >> 8) & 0xFF));
+                    sepSprms.Add(val);
+                }
+
                 AddShortSprm(0xB603, section.PageWidth);
                 AddShortSprm(0xB604, section.PageHeight);
                 AddShortSprm(0xB605, section.MarginLeft);
                 AddShortSprm(0xB606, section.MarginRight);
                 AddShortSprm(0xB607, section.MarginTop);
                 AddShortSprm(0xB608, section.MarginBottom);
+                if (HasDifferentFirstPage(section))
+                {
+                    AddByteSprm(0x300A, 1);
+                }
 
                 sepBinaryWriter.Write((short)sepSprms.Count);
                 sepBinaryWriter.Write(sepSprms.ToArray());
@@ -1149,6 +1544,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbPlcffndTxt = lcbPlcffndTxt,
                 fcPlcfHdd = fcPlcfHdd,
                 lcbPlcfHdd = lcbPlcfHdd,
+                fcPlcffldHdr = fcPlcffldHdr,
+                lcbPlcffldHdr = lcbPlcffldHdr,
                 fcPlcfbteChpx = fcPlcfbteChpx,
                 lcbPlcfbteChpx = lcbPlcfbteChpx,
                 fcPlcfbtePapx = fcPlcfbtePapx,
@@ -1165,6 +1562,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 lcbPlcffldMom = lcbPlcffldMom,
                 fcPlcfspaMom = fcPlcfspaMom,
                 lcbPlcfspaMom = lcbPlcfspaMom,
+                fcPlcSpaHdr = fcPlcSpaHdr,
+                lcbPlcSpaHdr = lcbPlcSpaHdr,
                 fcDggInfo = fcDggInfo,
                 lcbDggInfo = lcbDggInfo,
                 fcSttbLst = fcSttbLst,
@@ -1227,18 +1626,38 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return sprms.ToArray();
         }
 
-        private static void AppendSecondaryStoryText(StringBuilder textBuilder, ref int currentCp, ref int storyLength, string text)
+        private static void AppendSecondaryStoryText(
+            StringBuilder textBuilder,
+            ref int currentCp,
+            ref int storyLength,
+            string text,
+            PapxFkpWriter? papxWriter = null,
+            int? paragraphStartCp = null)
         {
+            int paragraphStart = paragraphStartCp ?? currentCp;
+
             if (!string.IsNullOrEmpty(text))
             {
-                textBuilder.Append(text);
-                currentCp += text.Length;
-                storyLength += text.Length;
+                for (int index = 0; index < text.Length; index++)
+                {
+                    char ch = text[index];
+                    textBuilder.Append(ch);
+                    currentCp += 1;
+                    storyLength += 1;
+
+                    if (ch == '\r' && papxWriter != null)
+                    {
+                        papxWriter.AddParagraph(paragraphStart, currentCp, Array.Empty<byte>());
+                        paragraphStart = currentCp;
+                    }
+                }
             }
 
             textBuilder.Append('\r');
             currentCp += 1;
             storyLength += 1;
+
+            papxWriter?.AddParagraph(paragraphStart, currentCp, Array.Empty<byte>());
         }
 
         private static void AppendNoteReferenceMarker(
@@ -1289,6 +1708,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return null;
             }
 
+            foreach (char ch in customMarkText)
+            {
+                if (char.IsControl(ch))
+                {
+                    return null;
+                }
+            }
+
             return customMarkText;
         }
 
@@ -1297,23 +1724,322 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             ref int currentCp,
             ref int storyLength,
             List<int> storyStarts,
-            string? text)
+            string? text,
+            PapxFkpWriter papxWriter)
         {
             storyStarts.Add(storyLength);
-            if (text != null)
+            if (text == null)
             {
-                AppendSecondaryStoryText(textBuilder, ref currentCp, ref storyLength, text);
+                return;
+            }
+
+            AppendHeaderStoryParagraphs(textBuilder, ref currentCp, ref storyLength, text, appendGuardParagraph: false, papxWriter);
+        }
+
+        private static void AppendHeaderFooterStoryText(
+            StringBuilder textBuilder,
+            ref int currentCp,
+            ref int storyLength,
+            List<int> storyStarts,
+            string? text,
+            PapxFkpWriter papxWriter)
+        {
+            storyStarts.Add(storyLength);
+            if (text == null)
+            {
+                return;
+            }
+
+            AppendHeaderStoryParagraphs(textBuilder, ref currentCp, ref storyLength, text, appendGuardParagraph: true, papxWriter);
+        }
+
+        private static void AppendHeaderStoryParagraphs(
+            StringBuilder textBuilder,
+            ref int currentCp,
+            ref int storyLength,
+            string? text,
+            bool appendGuardParagraph,
+            PapxFkpWriter papxWriter)
+        {
+            string storyText = text ?? string.Empty;
+            int paragraphStart = currentCp;
+
+            for (int index = 0; index < storyText.Length; index++)
+            {
+                char ch = storyText[index];
+                textBuilder.Append(ch);
+                currentCp += 1;
+                storyLength += 1;
+
+                if (ch == '\r')
+                {
+                    papxWriter.AddParagraph(paragraphStart, currentCp, Array.Empty<byte>());
+                    paragraphStart = currentCp;
+                }
+            }
+
+            if (storyText.Length == 0 || storyText[^1] != '\r')
+            {
+                textBuilder.Append('\r');
+                currentCp += 1;
+                storyLength += 1;
+                papxWriter.AddParagraph(paragraphStart, currentCp, Array.Empty<byte>());
+                paragraphStart = currentCp;
+            }
+
+            if (appendGuardParagraph)
+            {
+                textBuilder.Append('\r');
+                currentCp += 1;
+                storyLength += 1;
+                papxWriter.AddParagraph(paragraphStart, currentCp, Array.Empty<byte>());
             }
         }
 
-        private static bool HasExplicitHeaderStories(DocumentModel model)
+        private static ushort BuildFieldDescriptorCore(char marker, FieldModel? fieldModel, int nestingDepth)
+        {
+            ushort descriptor = marker;
+            if (fieldModel != null)
+            {
+                byte flags = 0;
+                if (marker == '\x0013' && fieldModel.IsLocked)
+                {
+                    flags |= 0x01;
+                }
+                if (marker == '\x0013' && fieldModel.IsDirty)
+                {
+                    flags |= 0x02;
+                }
+                if (!string.IsNullOrEmpty(fieldModel.Result))
+                {
+                    flags |= 0x04;
+                }
+                if (fieldModel.Type != FieldType.Unknown)
+                {
+                    flags |= 0x08;
+                }
+
+                descriptor |= (ushort)(flags << 8);
+            }
+
+            descriptor |= (ushort)((Math.Min(Math.Max(nestingDepth, 0), 15) & 0x0F) << 12);
+            return descriptor;
+        }
+
+        private static bool HasExplicitFieldBoundaryCore(IList<RunModel> runs, int startIndex, FieldModel fieldModel)
+        {
+            for (int index = startIndex; index < runs.Count; index++)
+            {
+                var candidate = runs[index];
+                if (!ReferenceEquals(candidate.Field, fieldModel))
+                {
+                    continue;
+                }
+
+                if (candidate.IsFieldSeparate || candidate.IsFieldEnd)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string ResolveFieldInstructionCore(FieldModel fieldModel)
+        {
+            if (!string.IsNullOrWhiteSpace(fieldModel.Instruction))
+            {
+                return fieldModel.Instruction;
+            }
+
+            return fieldModel.Type switch
+            {
+                FieldType.Page => "PAGE",
+                FieldType.NumPages => "NUMPAGES",
+                FieldType.SectionPages => "SECTIONPAGES",
+                FieldType.Date => "DATE",
+                FieldType.Time => "TIME",
+                FieldType.Author => "AUTHOR",
+                FieldType.Title => "TITLE",
+                FieldType.Subject => "SUBJECT",
+                FieldType.FileName => "FILENAME",
+                FieldType.Hyperlink => "HYPERLINK",
+                FieldType.Bookmark => "BOOKMARK",
+                FieldType.Index => "INDEX",
+                FieldType.Seq => "SEQ",
+                FieldType.Ref => "REF",
+                FieldType.MergeField => "MERGEFIELD",
+                _ => string.Empty
+            };
+        }
+
+        private static string BuildHyperlinkInstructionCore(HyperlinkModel hyperlinkModel)
+        {
+            if (!string.IsNullOrWhiteSpace(hyperlinkModel.TargetUrl))
+            {
+                return $"HYPERLINK \"{hyperlinkModel.TargetUrl}\"";
+            }
+
+            if (!string.IsNullOrWhiteSpace(hyperlinkModel.Anchor))
+            {
+                return $"HYPERLINK \\l \"{hyperlinkModel.Anchor}\"";
+            }
+
+            return "HYPERLINK";
+        }
+
+        private static void RemoveLastOpenFieldCore(List<FieldModel> openFieldList, FieldModel fieldModel)
+        {
+            for (int index = openFieldList.Count - 1; index >= 0; index--)
+            {
+                if (ReferenceEquals(openFieldList[index], fieldModel))
+                {
+                    openFieldList.RemoveAt(index);
+                    return;
+                }
+            }
+        }
+
+        private static int GetFieldDepthCore(List<FieldModel> openFieldList, FieldModel? fieldModel)
+        {
+            if (fieldModel == null)
+            {
+                return 0;
+            }
+
+            for (int index = openFieldList.Count - 1; index >= 0; index--)
+            {
+                if (ReferenceEquals(openFieldList[index], fieldModel))
+                {
+                    return index;
+                }
+            }
+
+            return 0;
+        }
+
+        private static bool HasExplicitHeaderStories(DocumentModel model, IReadOnlyList<SectionModel> sections)
         {
             return model.FootnoteSeparatorText != null ||
                    model.FootnoteContinuationSeparatorText != null ||
                    model.FootnoteContinuationNoticeText != null ||
                    model.EndnoteSeparatorText != null ||
                    model.EndnoteContinuationSeparatorText != null ||
-                   model.EndnoteContinuationNoticeText != null;
+                   model.EndnoteContinuationNoticeText != null ||
+                   HasSectionHeaderFooterStories(model, sections);
+        }
+
+        private static bool HasSectionHeaderFooterStories(DocumentModel model, IReadOnlyList<SectionModel> sections)
+        {
+            foreach (var section in sections)
+            {
+                if (ResolveDefaultHeaderStory(section) != null ||
+                    ResolveEvenPagesHeaderStory(model, section) != null ||
+                    ResolveDefaultFooterStory(section) != null ||
+                    ResolveEvenPagesFooterStory(model, section) != null ||
+                    ResolveFirstPageHeaderStory(section) != null ||
+                    ResolveFirstPageFooterStory(section) != null ||
+                    ResolveDefaultHeaderText(section) != null ||
+                    ResolveEvenPagesHeaderText(model, section) != null ||
+                    ResolveDefaultFooterText(section) != null ||
+                    ResolveEvenPagesFooterText(model, section) != null ||
+                    ResolveFirstPageHeaderText(section) != null ||
+                    ResolveFirstPageFooterText(section) != null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static HeaderFooterStoryModel? ResolveDefaultHeaderStory(SectionModel section)
+        {
+            return section.DefaultHeaderStory;
+        }
+
+        private static string? ResolveDefaultHeaderText(SectionModel section)
+        {
+            if (section.DefaultHeaderText != null)
+            {
+                return section.DefaultHeaderText;
+            }
+
+            return section.FirstPageHeaderStory == null &&
+                   section.EvenPagesHeaderStory == null &&
+                   section.FirstPageHeaderText == null &&
+                   section.EvenPagesHeaderText == null
+                ? section.HeaderText
+                : null;
+        }
+
+        private static HeaderFooterStoryModel? ResolveEvenPagesHeaderStory(DocumentModel model, SectionModel section)
+        {
+            return model.DifferentOddAndEvenPages ? section.EvenPagesHeaderStory : null;
+        }
+
+        private static string? ResolveEvenPagesHeaderText(DocumentModel model, SectionModel section)
+        {
+            return model.DifferentOddAndEvenPages ? section.EvenPagesHeaderText : null;
+        }
+
+        private static HeaderFooterStoryModel? ResolveDefaultFooterStory(SectionModel section)
+        {
+            return section.DefaultFooterStory;
+        }
+
+        private static string? ResolveDefaultFooterText(SectionModel section)
+        {
+            if (section.DefaultFooterText != null)
+            {
+                return section.DefaultFooterText;
+            }
+
+            return section.FirstPageFooterStory == null &&
+                   section.EvenPagesFooterStory == null &&
+                   section.FirstPageFooterText == null &&
+                   section.EvenPagesFooterText == null
+                ? section.FooterText
+                : null;
+        }
+
+        private static HeaderFooterStoryModel? ResolveEvenPagesFooterStory(DocumentModel model, SectionModel section)
+        {
+            return model.DifferentOddAndEvenPages ? section.EvenPagesFooterStory : null;
+        }
+
+        private static string? ResolveEvenPagesFooterText(DocumentModel model, SectionModel section)
+        {
+            return model.DifferentOddAndEvenPages ? section.EvenPagesFooterText : null;
+        }
+
+        private static HeaderFooterStoryModel? ResolveFirstPageHeaderStory(SectionModel section)
+        {
+            return HasDifferentFirstPage(section) ? section.FirstPageHeaderStory : null;
+        }
+
+        private static string? ResolveFirstPageHeaderText(SectionModel section)
+        {
+            return HasDifferentFirstPage(section) ? section.FirstPageHeaderText : null;
+        }
+
+        private static HeaderFooterStoryModel? ResolveFirstPageFooterStory(SectionModel section)
+        {
+            return HasDifferentFirstPage(section) ? section.FirstPageFooterStory : null;
+        }
+
+        private static string? ResolveFirstPageFooterText(SectionModel section)
+        {
+            return HasDifferentFirstPage(section) ? section.FirstPageFooterText : null;
+        }
+
+        private static bool HasDifferentFirstPage(SectionModel section)
+        {
+            return section.DifferentFirstPage ||
+                   section.FirstPageHeaderStory != null ||
+                   section.FirstPageFooterStory != null ||
+                   section.FirstPageHeaderText != null ||
+                   section.FirstPageFooterText != null;
         }
 
         private static byte[] BuildImageSprms(int pictureOffset)
@@ -1354,11 +2080,228 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return CanWriteNoteReference(endnote.ReferenceCp, endnote.Id);
         }
 
-        private static bool CanWriteComment(CommentModel comment)
+        private static List<(CommentModel comment, int index, string storyText)> BuildSupportedComments(IReadOnlyList<CommentModel> comments)
         {
-            return !comment.IsReply &&
-                   comment.StartCp >= 0 &&
+            var commentEntries = comments
+                .Select((comment, index) => (comment, index))
+                .ToList();
+            var commentsById = commentEntries
+                .Where(static entry => !string.IsNullOrEmpty(entry.comment.Id))
+                .ToDictionary(entry => entry.comment.Id, entry => entry, StringComparer.Ordinal);
+            var replyCommentsByParentId = BuildReplyCommentsByParentId(commentEntries);
+            var rootIndexByCommentIndex = new Dictionary<int, int>();
+            var supportedComments = new List<(CommentModel comment, int index, string storyText)>();
+
+            foreach (var entry in commentEntries)
+            {
+                rootIndexByCommentIndex[entry.index] = ResolveCommentEmissionRootIndex(entry.index);
+            }
+
+            foreach (var entry in commentEntries)
+            {
+                if (!CanAnchorComment(entry.comment))
+                {
+                    continue;
+                }
+
+                int rootIndex = rootIndexByCommentIndex[entry.index];
+                if (rootIndex != entry.index)
+                {
+                    continue;
+                }
+
+                string storyText = BuildCommentStoryText(entry, replyCommentsByParentId, rootIndexByCommentIndex);
+                supportedComments.Add((entry.comment, entry.index, storyText));
+            }
+
+            return supportedComments;
+
+            int ResolveCommentEmissionRootIndex(int commentIndex)
+            {
+                if (rootIndexByCommentIndex.TryGetValue(commentIndex, out int cachedRootIndex))
+                {
+                    return cachedRootIndex;
+                }
+
+                var visited = new HashSet<int>();
+                int resolvedRootIndex = ResolveCommentEmissionRootIndexCore(commentIndex, visited);
+                rootIndexByCommentIndex[commentIndex] = resolvedRootIndex;
+                return resolvedRootIndex;
+            }
+
+            int ResolveCommentEmissionRootIndexCore(int commentIndex, HashSet<int> visited)
+            {
+                if (rootIndexByCommentIndex.TryGetValue(commentIndex, out int cachedRootIndex))
+                {
+                    return cachedRootIndex;
+                }
+
+                if (!visited.Add(commentIndex))
+                {
+                    return commentIndex;
+                }
+
+                var entry = commentEntries[commentIndex];
+                if (!CanAnchorComment(entry.comment))
+                {
+                    if (entry.comment.IsReply &&
+                        !string.IsNullOrEmpty(entry.comment.ParentId) &&
+                        commentsById.TryGetValue(entry.comment.ParentId, out var parentEntry))
+                    {
+                        int parentRootIndex = ResolveCommentEmissionRootIndexCore(parentEntry.index, visited);
+                        rootIndexByCommentIndex[commentIndex] = parentRootIndex;
+                        return parentRootIndex;
+                    }
+
+                    rootIndexByCommentIndex[commentIndex] = -1;
+                    return -1;
+                }
+
+                if (!entry.comment.IsReply || string.IsNullOrEmpty(entry.comment.ParentId))
+                {
+                    rootIndexByCommentIndex[commentIndex] = commentIndex;
+                    return commentIndex;
+                }
+
+                if (!commentsById.TryGetValue(entry.comment.ParentId, out var directParentEntry))
+                {
+                    rootIndexByCommentIndex[commentIndex] = commentIndex;
+                    return commentIndex;
+                }
+
+                int directParentRootIndex = ResolveCommentEmissionRootIndexCore(directParentEntry.index, visited);
+                int resolvedRootIndex = directParentRootIndex >= 0 ? directParentRootIndex : commentIndex;
+                rootIndexByCommentIndex[commentIndex] = resolvedRootIndex;
+                return resolvedRootIndex;
+            }
+        }
+
+        private static Dictionary<string, List<(CommentModel comment, int index)>> BuildReplyCommentsByParentId(IReadOnlyList<(CommentModel comment, int index)> commentEntries)
+        {
+            var repliesByParentId = new Dictionary<string, List<(CommentModel comment, int index)>>(StringComparer.Ordinal);
+            foreach (var entry in commentEntries)
+            {
+                var comment = entry.comment;
+                if (!comment.IsReply || string.IsNullOrEmpty(comment.ParentId))
+                {
+                    continue;
+                }
+
+                if (!repliesByParentId.TryGetValue(comment.ParentId, out var replies))
+                {
+                    replies = new List<(CommentModel comment, int index)>();
+                    repliesByParentId[comment.ParentId] = replies;
+                }
+
+                replies.Add(entry);
+            }
+
+            foreach (var replies in repliesByParentId.Values)
+            {
+                replies.Sort(static (left, right) => left.index.CompareTo(right.index));
+            }
+
+            return repliesByParentId;
+        }
+
+        private static string BuildCommentStoryText(
+            (CommentModel comment, int index) rootEntry,
+            IReadOnlyDictionary<string, List<(CommentModel comment, int index)>> replyCommentsByParentId,
+            IReadOnlyDictionary<int, int> rootIndexByCommentIndex)
+        {
+            var builder = new StringBuilder();
+            var visitedReplyIndexes = new HashSet<int>();
+
+            AppendCommentBody(rootEntry.comment, includeReplyHeader: rootEntry.comment.IsReply);
+            AppendReplies(rootEntry.comment.Id);
+            return builder.ToString();
+
+            void AppendReplies(string? parentId)
+            {
+                if (string.IsNullOrEmpty(parentId) || !replyCommentsByParentId.TryGetValue(parentId, out var replies))
+                {
+                    return;
+                }
+
+                foreach (var (reply, index) in replies)
+                {
+                    if (!visitedReplyIndexes.Add(index))
+                    {
+                        continue;
+                    }
+
+                    if (!rootIndexByCommentIndex.TryGetValue(index, out int rootIndex) || rootIndex != rootEntry.index)
+                    {
+                        continue;
+                    }
+
+                    AppendCommentBody(reply, includeReplyHeader: true);
+                    AppendReplies(reply.Id);
+                }
+            }
+
+            void AppendCommentBody(CommentModel comment, bool includeReplyHeader)
+            {
+                if (builder.Length > 0)
+                {
+                    builder.Append('\r');
+                }
+
+                if (includeReplyHeader)
+                {
+                    builder.Append(BuildReplyHeader(comment));
+                    if (!string.IsNullOrEmpty(comment.Text))
+                    {
+                        builder.Append('\r');
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(comment.Text))
+                {
+                    builder.Append(comment.Text);
+                }
+            }
+        }
+
+        private static bool CanAnchorComment(CommentModel comment)
+        {
+            return comment.StartCp >= 0 &&
                    comment.EndCp >= comment.StartCp;
+        }
+
+        private static string BuildReplyHeader(CommentModel comment)
+        {
+            var header = new StringBuilder("[Reply");
+            string displayName = ResolveCommentDisplayName(comment);
+            if (!string.IsNullOrEmpty(displayName))
+            {
+                header.Append(" by ");
+                header.Append(displayName);
+            }
+
+            if (comment.Date.HasValue)
+            {
+                header.Append(" at ");
+                header.Append(comment.Date.Value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+            }
+
+            header.Append(']');
+            return header.ToString();
+        }
+
+        private static string ResolveCommentDisplayName(CommentModel comment)
+        {
+            if (!string.IsNullOrWhiteSpace(comment.Author))
+            {
+                return comment.Author.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(comment.Initials))
+            {
+                return comment.Initials.Trim();
+            }
+
+            return string.Empty;
         }
 
         private static string ResolveCommentInitials(CommentModel comment)
@@ -1443,16 +2386,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         }
 
         private static List<OfficeArtPictureDescriptor> BuildOfficeArtPictureDescriptors(
-            List<(int cp, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)> officeArtBlips)
+            List<(int cp, byte[] data, string contentType, int widthTwips, int heightTwips, int leftTwips, int topTwips, ImageWrapType wrapType, bool behindText, bool allowOverlap, string? horizontalRelativeTo, string? verticalRelativeTo)> officeArtBlips,
+            int pictureIndexOffset)
         {
             var pictures = new List<OfficeArtPictureDescriptor>(officeArtBlips.Count);
             for (int index = 0; index < officeArtBlips.Count; index++)
             {
                 var picture = officeArtBlips[index];
+                int pictureIndex = pictureIndexOffset + index;
                 pictures.Add(new OfficeArtPictureDescriptor(
                     picture.cp,
-                    GetPictureShapeId(index),
-                    index + 1,
+                    GetPictureShapeId(pictureIndex),
+                    pictureIndex + 1,
                     picture.data,
                     picture.contentType,
                     picture.widthTwips,
@@ -1469,7 +2414,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return pictures;
         }
 
-        private static void WritePlcfspaMom(
+        private static void WritePlcfspa(
             BinaryWriter writer,
             List<OfficeArtPictureDescriptor> officeArtPictures,
             int documentEndCp)
@@ -2703,10 +3648,65 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return cell.HasBottomPaddingOverride || cell.PaddingBottomTwips > 0;
         }
 
+        private static IEnumerable<object> EnumerateTableCellBlocks(TableCellModel cell)
+        {
+            if (cell.Content.Count > 0)
+            {
+                foreach (var block in cell.Content)
+                {
+                    yield return block;
+                }
+
+                yield break;
+            }
+
+            foreach (var paragraph in cell.Paragraphs)
+            {
+                yield return paragraph;
+            }
+        }
+
+        private static IEnumerable<ParagraphModel> EnumerateTableBlockParagraphs(object block)
+        {
+            if (block is ParagraphModel paragraph)
+            {
+                yield return paragraph;
+                yield break;
+            }
+
+            if (block is TableModel table)
+            {
+                foreach (var row in table.Rows)
+                {
+                    foreach (var cell in row.Cells)
+                    {
+                        foreach (var cellBlock in EnumerateTableCellBlocks(cell))
+                        {
+                            foreach (var cellParagraph in EnumerateTableBlockParagraphs(cellBlock))
+                            {
+                                yield return cellParagraph;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static IEnumerable<ParagraphModel> EnumerateTableCellParagraphs(TableCellModel cell)
+        {
+            foreach (var block in EnumerateTableCellBlocks(cell))
+            {
+                foreach (var paragraph in EnumerateTableBlockParagraphs(block))
+                {
+                    yield return paragraph;
+                }
+            }
+        }
+
         private static int EstimateTableCellContentHeightTwips(TableCellModel cell, int cellAvailableWidthTwips)
         {
             int contentHeightTwips = 0;
-            foreach (var paragraph in cell.Paragraphs)
+            foreach (var paragraph in EnumerateTableCellParagraphs(cell))
             {
                 int paragraphAvailableWidthTwips = ResolveParagraphAvailableWidthTwips(paragraph, cellAvailableWidthTwips);
                 int paragraphContentHeightTwips = EstimateParagraphContentHeightTwips(paragraph, paragraphAvailableWidthTwips);
@@ -2719,7 +3719,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         private static int EstimateTableCellContentWidthTwips(TableCellModel cell)
         {
             int maxContentWidth = 0;
-            foreach (var paragraph in cell.Paragraphs)
+            foreach (var paragraph in EnumerateTableCellParagraphs(cell))
             {
                 int paragraphMaxLineWidth = 0;
                 int currentWidth = 0;

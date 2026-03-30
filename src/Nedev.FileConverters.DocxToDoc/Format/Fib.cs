@@ -14,11 +14,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         public const int CommentReferencePairIndex = 4;
         public const int CommentTextPairIndex = 5;
         public const int HeaderStoryPairIndex = 11;
+        public const int HeaderFieldPairIndex = 17;
         public const int EndnoteReferencePairIndex = 46;
         public const int EndnoteTextPairIndex = 47;
         public const int ChpxPairIndex = 12;
         public const int PapxPairIndex = 13;
         public const int ClxPairIndex = 33;
+        public const int HeaderShapePairIndex = 39;
         public const int TapxPairIndex = 54;
 
         public ushort wIdent { get; set; } = 0xA5EC;
@@ -45,6 +47,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         public int fcPlcfHdd { get; set; } // Header document PLCF
         public int lcbPlcfHdd { get; set; }
+        public int fcPlcffldHdr { get; set; } // Header document field table
+        public int lcbPlcffldHdr { get; set; }
 
         public int fcPlcfbteChpx { get; set; }
         public int lcbPlcfbteChpx { get; set; }
@@ -66,6 +70,8 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         public int fcPlcfspaMom { get; set; } // Main document shape positions
         public int lcbPlcfspaMom { get; set; }
+        public int fcPlcSpaHdr { get; set; } // Header document shape positions
+        public int lcbPlcSpaHdr { get; set; }
 
         public int fcDggInfo { get; set; } // OfficeArt drawing group information
         public int lcbDggInfo { get; set; }
@@ -160,7 +166,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             SetPair(PapxPairIndex, fcPlcfbtePapx, lcbPlcfbtePapx);
             SetPair(14, fcSttbfffn, lcbSttbfffn);
             SetPair(15, fcPlcffldMom, lcbPlcffldMom);
+            SetPair(HeaderFieldPairIndex, fcPlcffldHdr, lcbPlcffldHdr);
             SetPair(ClxPairIndex, fcClx, lcbClx);
+            SetPair(HeaderShapePairIndex, fcPlcSpaHdr, lcbPlcSpaHdr);
             SetPair(40, fcPlcfspaMom, lcbPlcfspaMom);
             SetPair(50, fcDggInfo, lcbDggInfo);
             SetPair(53, fcPlfLfo, lcbPlfLfo);

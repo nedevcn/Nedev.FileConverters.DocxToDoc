@@ -70,6 +70,68 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             // (Assuming it was written to 1Table correctly)
         }
 
+        [Fact]
+        public void WriteDocBlocks_WithNestedTableInsideCellContent_WritesNestedTableMarkers()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel { Runs = { new RunModel { Text = "Before" } } });
+
+            var nestedTable = new TableModel();
+            var nestedRow = new TableRowModel();
+            var nestedCell = new TableCellModel { Width = 2400 };
+            var nestedCellParagraph = new ParagraphModel();
+            nestedCellParagraph.Runs.Add(new RunModel { Text = "Cell" });
+            nestedCell.Paragraphs.Add(nestedCellParagraph);
+            nestedRow.Cells.Add(nestedCell);
+            nestedTable.Rows.Add(nestedRow);
+
+            var outerTable = new TableModel();
+            var outerRow = new TableRowModel();
+            var outerCell = new TableCellModel { Width = 5000 };
+
+            var cellLead = new ParagraphModel();
+            cellLead.Runs.Add(new RunModel { Text = "Inner lead" });
+            var cellTail = new ParagraphModel();
+            cellTail.Runs.Add(new RunModel { Text = "Inner tail" });
+
+            outerCell.Content.Add(cellLead);
+            outerCell.Content.Add(nestedTable);
+            outerCell.Content.Add(cellTail);
+
+            outerCell.Paragraphs.Add(cellLead);
+            outerCell.Paragraphs.Add(nestedCellParagraph);
+            outerCell.Paragraphs.Add(cellTail);
+
+            outerRow.Cells.Add(outerCell);
+            outerTable.Rows.Add(outerRow);
+            model.Content.Add(outerTable);
+            model.Content.Add(new ParagraphModel { Runs = { new RunModel { Text = "After" } } });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+            string expectedText = "Before\rInner lead\rCell\r\x0007\rInner tail\r\x0007\rAfter\r";
+            var textBytes = new byte[expectedText.Length];
+            Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            string extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+
+            int lcbPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8) + 4);
+            Assert.True(lcbPlcfbteTapx > 0);
+            Assert.True(GetTapxRunCount(wordDocData, tableStream.GetData()) >= 3);
+        }
+
         private bool IsWord97Format(byte[] data)
         {
             return BitConverter.ToUInt16(data, 0) == 0xA5EC;
@@ -623,6 +685,40 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int topWithExactHeight = GetAlignedCellImageTopWithRowHeight(2200, TableRowHeightRule.Exact, TableCellVerticalAlignment.Bottom, pngBytes);
 
             Assert.True(topWithExactHeight > topWithoutExactHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableRowHeightExact_WithNestedTableInsideCellContent_ShiftsBottomAlignedFloatingImage()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithoutExactHeight = GetAlignedCellImageTopWithRowHeightAndNestedTableContent(0, TableRowHeightRule.Auto, TableCellVerticalAlignment.Bottom, pngBytes);
+            int topWithExactHeight = GetAlignedCellImageTopWithRowHeightAndNestedTableContent(4200, TableRowHeightRule.Exact, TableCellVerticalAlignment.Bottom, pngBytes);
+
+            Assert.True(topWithExactHeight > topWithoutExactHeight);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_TableCellVerticalAlignment_WithNestedTableInsideCellContent_ShiftsFloatingImageWithinTallRow()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topWithTopAlignment = GetAlignedCellImageTopWithNestedTableContent(TableCellVerticalAlignment.Top, pngBytes);
+            int topWithBottomAlignment = GetAlignedCellImageTopWithNestedTableContent(TableCellVerticalAlignment.Bottom, pngBytes);
+
+            Assert.True(topWithBottomAlignment > topWithTopAlignment);
         }
 
         [Fact]
@@ -2573,6 +2669,14 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return BitConverter.ToInt32(tableData, recordOffset + 8);
         }
 
+        private static byte GetTapxRunCount(byte[] wordDocData, byte[] tableData)
+        {
+            int fcPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8));
+            int pnTapx = BitConverter.ToInt32(tableData, fcPlcfbteTapx + 8);
+            int tapxPageOffset = pnTapx * 512;
+            return wordDocData[tapxPageOffset + 511];
+        }
+
         private static int GetAlignedCellImageTopWithRowHeight(int rowHeightTwips, TableRowHeightRule heightRule, TableCellVerticalAlignment alignment, byte[] pngBytes)
         {
             var model = new DocumentModel();
@@ -2594,6 +2698,57 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                     }
                 }
             });
+
+            var alignedCell = new TableCellModel { Width = 2600, VerticalAlignment = alignment };
+            alignedCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(contentCell);
+            row.Cells.Add(alignedCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAlignedCellImageTopWithRowHeightAndNestedTableContent(int rowHeightTwips, TableRowHeightRule heightRule, TableCellVerticalAlignment alignment, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel { HeightTwips = rowHeightTwips, HeightRule = heightRule };
+
+            var contentCell = CreateNestedTableMixedContentCell();
 
             var alignedCell = new TableCellModel { Width = 2600, VerticalAlignment = alignment };
             alignedCell.Paragraphs.Add(new ParagraphModel
@@ -2698,6 +2853,96 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int recordOffset = fcPlcfspaMom + 8;
 
             return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static int GetAlignedCellImageTopWithNestedTableContent(TableCellVerticalAlignment alignment, byte[] pngBytes)
+        {
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel();
+
+            var contentCell = CreateNestedTableMixedContentCell();
+
+            var alignedCell = new TableCellModel { Width = 2600, VerticalAlignment = alignment };
+            alignedCell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            VerticalRelativeTo = "paragraph",
+                            PositionYTwips = 50
+                        }
+                    }
+                }
+            });
+
+            row.Cells.Add(contentCell);
+            row.Cells.Add(alignedCell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            return BitConverter.ToInt32(tableData, recordOffset + 8);
+        }
+
+        private static TableCellModel CreateNestedTableMixedContentCell()
+        {
+            var contentCell = new TableCellModel { Width = 2600 };
+
+            var leadParagraph = new ParagraphModel();
+            leadParagraph.Runs.Add(new RunModel
+            {
+                Text = "Lead"
+            });
+
+            var nestedTable = new TableModel();
+            var nestedRow = new TableRowModel();
+            var nestedCell = new TableCellModel { Width = 1800 };
+            var nestedCellParagraph = new ParagraphModel();
+            nestedCellParagraph.Runs.Add(new RunModel
+            {
+                Text = "Nested cell text"
+            });
+            nestedCell.Paragraphs.Add(nestedCellParagraph);
+            nestedRow.Cells.Add(nestedCell);
+            nestedTable.Rows.Add(nestedRow);
+
+            var tailParagraph = new ParagraphModel();
+            tailParagraph.Runs.Add(new RunModel
+            {
+                Text = "Tail"
+            });
+
+            contentCell.Content.Add(leadParagraph);
+            contentCell.Content.Add(nestedTable);
+            contentCell.Content.Add(tailParagraph);
+
+            contentCell.Paragraphs.Add(leadParagraph);
+            contentCell.Paragraphs.Add(nestedCellParagraph);
+            contentCell.Paragraphs.Add(tailParagraph);
+
+            return contentCell;
         }
     }
 }

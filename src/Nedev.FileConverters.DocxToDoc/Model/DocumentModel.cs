@@ -24,6 +24,7 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public string? EndnoteSeparatorText { get; set; }
         public string? EndnoteContinuationSeparatorText { get; set; }
         public string? EndnoteContinuationNoticeText { get; set; }
+        public bool DifferentOddAndEvenPages { get; set; }
         public DocumentProperties Properties { get; } = new DocumentProperties();
 
         /// <summary>
@@ -72,10 +73,32 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         public string? FirstPageFooterReference { get; set; }
         public string? EvenPagesHeaderReference { get; set; }
         public string? EvenPagesFooterReference { get; set; }
+        public HeaderFooterStoryModel? DefaultHeaderStory { get; set; }
+        public HeaderFooterStoryModel? DefaultFooterStory { get; set; }
+        public HeaderFooterStoryModel? FirstPageHeaderStory { get; set; }
+        public HeaderFooterStoryModel? FirstPageFooterStory { get; set; }
+        public HeaderFooterStoryModel? EvenPagesHeaderStory { get; set; }
+        public HeaderFooterStoryModel? EvenPagesFooterStory { get; set; }
+        public string? DefaultHeaderText { get; set; }
+        public string? DefaultFooterText { get; set; }
+        public string? FirstPageHeaderText { get; set; }
+        public string? FirstPageFooterText { get; set; }
+        public string? EvenPagesHeaderText { get; set; }
+        public string? EvenPagesFooterText { get; set; }
+        public string? HeaderText { get; set; }
+        public string? FooterText { get; set; }
+        public bool DifferentFirstPage { get; set; }
 
         // Page numbering
         public int StartPageNumber { get; set; } = 1;
         public bool RestartPageNumbering { get; set; } = false;
+    }
+
+    public class HeaderFooterStoryModel
+    {
+        public List<object> Content { get; } = new List<object>(); // ParagraphModel or TableModel
+        public List<ParagraphModel> Paragraphs { get; } = new List<ParagraphModel>();
+        public string Text { get; set; } = string.Empty;
     }
 
     public class AbstractNumberingModel
@@ -195,6 +218,7 @@ namespace Nedev.FileConverters.DocxToDoc.Model
 
     public class TableCellModel
     {
+        public List<object> Content { get; } = new List<object>(); // ParagraphModel or TableModel
         public List<ParagraphModel> Paragraphs { get; } = new List<ParagraphModel>();
         public int Width { get; set; }
         public TableWidthUnit WidthUnit { get; set; } = TableWidthUnit.Dxa;
@@ -352,6 +376,7 @@ namespace Nedev.FileConverters.DocxToDoc.Model
         Unknown = 0,
         Page = 1,           // PAGE - Current page number
         NumPages = 2,       // NUMPAGES - Total pages
+        SectionPages = 15,  // SECTIONPAGES - Total pages in current section
         Date = 3,           // DATE - Current date
         Time = 4,           // TIME - Current time
         Author = 5,         // AUTHOR - Document author

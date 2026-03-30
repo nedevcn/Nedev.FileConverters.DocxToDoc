@@ -594,5 +594,46 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.Equal(6, BitConverter.ToInt32(wordDocData, 64));
             Assert.Equal(6, BitConverter.ToInt32(wordDocData, 80));
         }
+
+        [Fact]
+        public void WriteDocBlocks_WithControlCharacterEndnoteCustomMark_FallsBackToDefaultMarker()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "ABCD" }
+                }
+            });
+            model.Endnotes.Add(new EndnoteModel
+            {
+                Id = "2",
+                Text = "Note",
+                ReferenceCp = 2,
+                CustomMarkText = "(a)\r"
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            var wordDocData = wordDocStream.GetData();
+            string expectedText = "AB\x0002CD\r\x0002Note\r";
+            var textBytes = new byte[expectedText.Length];
+            System.Array.Copy(wordDocData, 1536, textBytes, 0, expectedText.Length);
+            var extractedText = Encoding.GetEncoding(1252).GetString(textBytes);
+
+            Assert.Equal(expectedText, extractedText);
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 64));
+            Assert.Equal(6, BitConverter.ToInt32(wordDocData, 80));
+        }
     }
 }

@@ -6,6 +6,8 @@ using System.Text;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
+using System.Text.RegularExpressions;
 
 namespace Nedev.FileConverters.DocxToDoc.Format
 {
@@ -37,8 +39,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private Dictionary<string, string> LoadRelationships()
         {
-            var rels = new Dictionary<string, string>();
-            var relsEntry = _archive.GetEntry("word/_rels/document.xml.rels");
+            return LoadRelationships("word/_rels/document.xml.rels");
+        }
+
+        private Dictionary<string, string> LoadRelationships(string relationshipsEntryPath)
+        {
+            var rels = new Dictionary<string, string>(StringComparer.Ordinal);
+            var relsEntry = _archive.GetEntry(relationshipsEntryPath);
             if (relsEntry == null) return rels;
 
             using var stream = relsEntry.Open();
@@ -56,6 +63,17 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
             }
             return rels;
+        }
+
+        private Dictionary<string, string> LoadRelationshipsForPart(string partEntryPath)
+        {
+            string fileName = Path.GetFileName(partEntryPath);
+            string? directory = Path.GetDirectoryName(partEntryPath)?.Replace('\\', '/');
+            string relationshipsEntryPath = string.IsNullOrEmpty(directory)
+                ? $"_rels/{fileName}.rels"
+                : $"{directory}/_rels/{fileName}.rels";
+
+            return LoadRelationships(relationshipsEntryPath);
         }
 
         public Nedev.FileConverters.DocxToDoc.Model.DocumentModel ReadDocument()
@@ -112,6 +130,13 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 using var extendedPropsStream = extendedPropsEntry.Open();
                 ParseDocumentProperties(extendedPropsStream, docModel);
+            }
+
+            var settingsEntry = _archive.GetEntry("word/settings.xml");
+            if (settingsEntry != null)
+            {
+                using var settingsStream = settingsEntry.Open();
+                ParseDocumentSettings(settingsStream, docModel);
             }
 
             // Parse Footnotes
@@ -411,10 +436,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                             currentTable.DefaultCellPaddingBottomTwips = bottomPaddingTwips;
                         }
                     }
+                    else if (localName == "altChunk")
+                    {
+                        AppendAltChunkContent(xmlReader.GetAttribute("r:id"), docModel, currentCell, textBuffer);
+                    }
                     else if (localName == "p")
                     {
                         currentParagraph = new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel();
-                        if (currentCell != null) currentCell.Paragraphs.Add(currentParagraph);
+                        if (currentCell != null)
+                        {
+                            currentCell.Content.Add(currentParagraph);
+                            currentCell.Paragraphs.Add(currentParagraph);
+                        }
                         else 
                         {
                             docModel.Content.Add(currentParagraph);
@@ -475,6 +508,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                 case "even": currentSection.EvenPagesFooterReference = id; break;
                             }
                         }
+                    }
+                    else if (localName == "titlePg" && currentSection != null)
+                    {
+                        currentSection.DifferentFirstPage = !string.Equals(xmlReader.GetAttribute("w:val"), "false", StringComparison.OrdinalIgnoreCase) &&
+                                                            !string.Equals(xmlReader.GetAttribute("w:val"), "0", StringComparison.OrdinalIgnoreCase);
                     }
                     else if (localName == "pgNumType" && currentSection != null)
                     {
@@ -612,20 +650,28 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                         }
                                         else if (xmlReader.LocalName == "drawing")
                                         {
-                                            var image = ParseDrawing(xmlReader);
+                                            var (image, textBoxText) = ParseDrawing(xmlReader);
                                             if (image != null)
                                             {
                                                 run.Image = image;
                                                 LoadImageData(image);
                                             }
+                                            if (!string.IsNullOrEmpty(textBoxText))
+                                            {
+                                                AppendRunTextSegment(currentParagraph, ref run, runBaseProperties, textBuffer, textBoxText, hyperlink);
+                                            }
                                         }
                                         else if (xmlReader.LocalName == "pict")
                                         {
-                                            var image = ParsePict(xmlReader);
+                                            var (image, textBoxText) = ParsePict(xmlReader);
                                             if (image != null)
                                             {
                                                 run.Image = image;
                                                 LoadImageData(image);
+                                            }
+                                            if (!string.IsNullOrEmpty(textBoxText))
+                                            {
+                                                AppendRunTextSegment(currentParagraph, ref run, runBaseProperties, textBuffer, textBoxText, hyperlink);
                                             }
                                         }
                                         else if (TryApplyRunFormattingElement(xmlReader, run))
@@ -682,22 +728,30 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     else if (localName == "drawing" && currentRun != null)
                     {
                         // Parse inline or anchored image
-                        var image = ParseDrawing(xmlReader);
+                        var (image, textBoxText) = ParseDrawing(xmlReader);
                         if (image != null)
                         {
                             currentRun.Image = image;
                             // Load actual image data
                             LoadImageData(image);
                         }
+                        if (!string.IsNullOrEmpty(textBoxText) && currentParagraph != null && currentRunBaseProperties != null)
+                        {
+                            AppendRunTextSegment(currentParagraph, ref currentRun, currentRunBaseProperties, textBuffer, textBoxText);
+                        }
                     }
                     else if (localName == "pict" && currentRun != null)
                     {
                         // Parse fallback VML images (e.g., from SmartArt)
-                        var image = ParsePict(xmlReader);
+                        var (image, textBoxText) = ParsePict(xmlReader);
                         if (image != null)
                         {
                             currentRun.Image = image;
                             LoadImageData(image);
+                        }
+                        if (!string.IsNullOrEmpty(textBoxText) && currentParagraph != null && currentRunBaseProperties != null)
+                        {
+                            AppendRunTextSegment(currentParagraph, ref currentRun, currentRunBaseProperties, textBuffer, textBoxText);
                         }
                     }
                     else if (localName == "fldChar" && currentRun != null)
@@ -812,8 +866,1487 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             ParseFootnoteReferences(docModel);
             ParseEndnoteReferences(docModel);
             ParseCommentRanges(docModel);
+            ParseSectionHeaderFooterStories(docModel);
 
             return docModel;
+        }
+
+        private void ParseSectionHeaderFooterStories(Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            foreach (var section in docModel.Sections)
+            {
+                section.DefaultHeaderStory = ReadHeaderFooterStoryModel(section.HeaderReference);
+                section.DefaultFooterStory = ReadHeaderFooterStoryModel(section.FooterReference);
+                section.FirstPageHeaderStory = ReadHeaderFooterStoryModel(section.FirstPageHeaderReference);
+                section.FirstPageFooterStory = ReadHeaderFooterStoryModel(section.FirstPageFooterReference);
+                section.EvenPagesHeaderStory = ReadHeaderFooterStoryModel(section.EvenPagesHeaderReference);
+                section.EvenPagesFooterStory = ReadHeaderFooterStoryModel(section.EvenPagesFooterReference);
+
+                section.DefaultHeaderText = section.DefaultHeaderStory?.Text;
+                section.DefaultFooterText = section.DefaultFooterStory?.Text;
+                section.FirstPageHeaderText = section.FirstPageHeaderStory?.Text;
+                section.FirstPageFooterText = section.FirstPageFooterStory?.Text;
+                section.EvenPagesHeaderText = section.EvenPagesHeaderStory?.Text;
+                section.EvenPagesFooterText = section.EvenPagesFooterStory?.Text;
+
+                section.HeaderText = ReadHeaderFooterSummaryStory(
+                    docModel.DifferentOddAndEvenPages,
+                    section.DefaultHeaderStory,
+                    section.FirstPageHeaderStory,
+                    section.EvenPagesHeaderStory);
+
+                section.FooterText = ReadHeaderFooterSummaryStory(
+                    docModel.DifferentOddAndEvenPages,
+                    section.DefaultFooterStory,
+                    section.FirstPageFooterStory,
+                    section.EvenPagesFooterStory);
+            }
+        }
+
+        private string? ReadHeaderFooterSummaryStory(
+            bool includeEvenPagesStory,
+            Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel? defaultStory,
+            Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel? firstStory,
+            Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel? evenStory)
+        {
+            if (defaultStory != null)
+            {
+                return defaultStory.Text;
+            }
+
+            if (firstStory != null)
+            {
+                return firstStory.Text;
+            }
+
+            return includeEvenPagesStory && evenStory != null
+                ? evenStory.Text
+                : null;
+        }
+
+        private static void ParseDocumentSettings(
+            Stream settingsStream,
+            Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel)
+        {
+            using var reader = XmlReader.Create(settingsStream, new XmlReaderSettings { IgnoreWhitespace = true });
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "evenAndOddHeaders")
+                {
+                    continue;
+                }
+
+                string? value = reader.GetAttribute("w:val");
+                docModel.DifferentOddAndEvenPages =
+                    !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase);
+                return;
+            }
+        }
+
+        private Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel? ReadHeaderFooterStoryModel(string? relationshipId)
+        {
+            if (string.IsNullOrEmpty(relationshipId) || !_relationships.TryGetValue(relationshipId, out string? target) || string.IsNullOrEmpty(target))
+            {
+                return null;
+            }
+
+            string entryPath = ResolvePartTargetPath("word/document.xml", target);
+
+            var entry = _archive.GetEntry(entryPath);
+            if (entry == null)
+            {
+                return null;
+            }
+
+            Dictionary<string, string> storyRelationships = LoadRelationshipsForPart(entryPath);
+            using var stream = entry.Open();
+            var story = ReadHeaderFooterStory(stream, entryPath, storyRelationships);
+            ResolveHeaderFooterStoryHyperlinks(story, storyRelationships);
+            return story;
+        }
+
+        private Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel ReadHeaderFooterStory(
+            Stream storyStream,
+            string storyEntryPath,
+            IReadOnlyDictionary<string, string> storyRelationships)
+        {
+            using var reader = XmlReader.Create(storyStream, new XmlReaderSettings { IgnoreWhitespace = true });
+
+            var story = new Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel();
+            var storyText = new StringBuilder();
+            int storyParagraphCount = 0;
+            bool pendingSummaryWhitespaceCollapse = false;
+            var openFields = new Stack<Nedev.FileConverters.DocxToDoc.Model.FieldModel>();
+            var simpleFields = new Stack<(Nedev.FileConverters.DocxToDoc.Model.ParagraphModel Paragraph, Nedev.FileConverters.DocxToDoc.Model.FieldModel Field)>();
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel? currentParagraph = null;
+            Nedev.FileConverters.DocxToDoc.Model.RunModel? currentRun = null;
+            Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties? currentRunBaseProperties = null;
+            Nedev.FileConverters.DocxToDoc.Model.TableModel? currentTable = null;
+            Nedev.FileConverters.DocxToDoc.Model.TableRowModel? currentRow = null;
+            Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentCell = null;
+            bool insideTableCellMargins = false;
+            bool insideCellMargins = false;
+            bool insideTableBorders = false;
+            bool insideCellBorders = false;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element)
+                {
+                    string localName = reader.LocalName;
+                    if (localName == "tbl" && currentCell == null)
+                    {
+                        currentTable = new Nedev.FileConverters.DocxToDoc.Model.TableModel();
+                        story.Content.Add(currentTable);
+                    }
+                    else if (localName == "tr" && currentTable != null)
+                    {
+                        currentRow = new Nedev.FileConverters.DocxToDoc.Model.TableRowModel();
+                        currentTable.Rows.Add(currentRow);
+                    }
+                    else if (localName == "tc" && currentRow != null)
+                    {
+                        currentCell = new Nedev.FileConverters.DocxToDoc.Model.TableCellModel();
+                        currentRow.Cells.Add(currentCell);
+                    }
+                    else if (localName == "trHeight" && currentRow != null)
+                    {
+                        if (int.TryParse(reader.GetAttribute("w:val"), out int rowHeightTwips))
+                        {
+                            currentRow.HeightTwips = rowHeightTwips;
+                        }
+
+                        string? heightRule = reader.GetAttribute("w:hRule");
+                        currentRow.HeightRule = heightRule switch
+                        {
+                            "exact" => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.Exact,
+                            "atLeast" => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.AtLeast,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableRowHeightRule.Auto
+                        };
+                    }
+                    else if (localName == "tcW" && currentCell != null)
+                    {
+                        string? type = reader.GetAttribute("w:type");
+                        currentCell.WidthUnit = type switch
+                        {
+                            "pct" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct,
+                            "auto" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa
+                        };
+
+                        if (int.TryParse(reader.GetAttribute("w:w"), out int width) &&
+                            (currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa ||
+                             currentCell.WidthUnit == Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct))
+                        {
+                            currentCell.Width = width;
+                        }
+                        else
+                        {
+                            currentCell.Width = 0;
+                        }
+                    }
+                    else if (localName == "gridCol" && currentTable != null)
+                    {
+                        if (int.TryParse(reader.GetAttribute("w:w"), out int gridWidth) && gridWidth > 0)
+                        {
+                            currentTable.GridColumnWidths.Add(gridWidth);
+                        }
+                    }
+                    else if (localName == "tblCellSpacing" && currentTable != null && currentCell == null)
+                    {
+                        if (TryReadDxaWidth(reader, out int cellSpacingTwips))
+                        {
+                            currentTable.CellSpacingTwips = cellSpacingTwips;
+                        }
+                    }
+                    else if (localName == "tblW" && currentTable != null && currentCell == null)
+                    {
+                        string? type = reader.GetAttribute("w:type");
+                        string? widthValue = reader.GetAttribute("w:w");
+
+                        currentTable.PreferredWidthUnit = type switch
+                        {
+                            "dxa" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Dxa,
+                            "pct" => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Pct,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableWidthUnit.Auto
+                        };
+
+                        if (int.TryParse(widthValue, out int preferredWidthValue))
+                        {
+                            currentTable.PreferredWidthValue = preferredWidthValue;
+                        }
+                    }
+                    else if (localName == "gridSpan" && currentCell != null)
+                    {
+                        if (int.TryParse(reader.GetAttribute("w:val"), out int gridSpan) && gridSpan > 0)
+                        {
+                            currentCell.GridSpan = gridSpan;
+                        }
+                    }
+                    else if (localName == "vAlign" && currentCell != null)
+                    {
+                        string? value = reader.GetAttribute("w:val");
+                        currentCell.VerticalAlignment = value switch
+                        {
+                            "center" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Center,
+                            "bottom" => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Bottom,
+                            _ => Nedev.FileConverters.DocxToDoc.Model.TableCellVerticalAlignment.Top
+                        };
+                    }
+                    else if (localName == "tblCellMar" && currentTable != null && currentCell == null)
+                    {
+                        insideTableCellMargins = true;
+                    }
+                    else if (localName == "tblBorders" && currentTable != null && currentCell == null)
+                    {
+                        insideTableBorders = true;
+                    }
+                    else if (localName == "tcMar" && currentCell != null)
+                    {
+                        insideCellMargins = true;
+                    }
+                    else if (localName == "tcBorders" && currentCell != null)
+                    {
+                        insideCellBorders = true;
+                    }
+                    else if (localName == "insideH" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(reader, out int insideHorizontalBorderTwips, out var insideHStyle))
+                    {
+                        currentTable.DefaultInsideHorizontalBorderTwips = insideHorizontalBorderTwips;
+                        currentTable.DefaultInsideHorizontalBorderStyle = insideHStyle;
+                    }
+                    else if (localName == "insideV" && insideTableBorders && currentTable != null && TryReadBorderWidthTwips(reader, out int insideVerticalBorderTwips, out var insideVStyle))
+                    {
+                        currentTable.DefaultInsideVerticalBorderTwips = insideVerticalBorderTwips;
+                        currentTable.DefaultInsideVerticalBorderStyle = insideVStyle;
+                    }
+                    else if ((localName == "left" || localName == "start") && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(reader, out int leftBorderTwips, out var leftStyle))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.HasLeftBorderOverride = true;
+                            currentCell.BorderLeftTwips = leftBorderTwips;
+                            currentCell.BorderLeftStyle = leftStyle;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderLeftTwips = leftBorderTwips;
+                            currentTable.DefaultBorderLeftStyle = leftStyle;
+                        }
+                    }
+                    else if ((localName == "right" || localName == "end") && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(reader, out int rightBorderTwips, out var rightStyle))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.HasRightBorderOverride = true;
+                            currentCell.BorderRightTwips = rightBorderTwips;
+                            currentCell.BorderRightStyle = rightStyle;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderRightTwips = rightBorderTwips;
+                            currentTable.DefaultBorderRightStyle = rightStyle;
+                        }
+                    }
+                    else if (localName == "top" && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(reader, out int topBorderTwips, out var topStyle))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.HasTopBorderOverride = true;
+                            currentCell.BorderTopTwips = topBorderTwips;
+                            currentCell.BorderTopStyle = topStyle;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderTopTwips = topBorderTwips;
+                            currentTable.DefaultBorderTopStyle = topStyle;
+                        }
+                    }
+                    else if (localName == "bottom" && (insideCellBorders || insideTableBorders) && TryReadBorderWidthTwips(reader, out int bottomBorderTwips, out var bottomStyle))
+                    {
+                        if (insideCellBorders && currentCell != null)
+                        {
+                            currentCell.HasBottomBorderOverride = true;
+                            currentCell.BorderBottomTwips = bottomBorderTwips;
+                            currentCell.BorderBottomStyle = bottomStyle;
+                        }
+                        else if (insideTableBorders && currentTable != null)
+                        {
+                            currentTable.DefaultBorderBottomTwips = bottomBorderTwips;
+                            currentTable.DefaultBorderBottomStyle = bottomStyle;
+                        }
+                    }
+                    else if ((localName == "left" || localName == "start") && TryReadDxaWidth(reader, out int leftPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.HasLeftPaddingOverride = true;
+                            currentCell.PaddingLeftTwips = leftPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingLeftTwips = leftPaddingTwips;
+                        }
+                    }
+                    else if ((localName == "right" || localName == "end") && TryReadDxaWidth(reader, out int rightPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.HasRightPaddingOverride = true;
+                            currentCell.PaddingRightTwips = rightPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingRightTwips = rightPaddingTwips;
+                        }
+                    }
+                    else if (localName == "top" && TryReadDxaWidth(reader, out int topPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.HasTopPaddingOverride = true;
+                            currentCell.PaddingTopTwips = topPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingTopTwips = topPaddingTwips;
+                        }
+                    }
+                    else if (localName == "bottom" && TryReadDxaWidth(reader, out int bottomPaddingTwips))
+                    {
+                        if (insideCellMargins && currentCell != null)
+                        {
+                            currentCell.HasBottomPaddingOverride = true;
+                            currentCell.PaddingBottomTwips = bottomPaddingTwips;
+                        }
+                        else if (insideTableCellMargins && currentTable != null)
+                        {
+                            currentTable.DefaultCellPaddingBottomTwips = bottomPaddingTwips;
+                        }
+                    }
+                    else if (localName == "p")
+                    {
+                        if (storyParagraphCount > 0)
+                        {
+                            storyText.Append('\r');
+                        }
+
+                        currentParagraph = new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel();
+                        storyParagraphCount++;
+                        if (currentCell != null)
+                        {
+                            currentCell.Content.Add(currentParagraph);
+                            currentCell.Paragraphs.Add(currentParagraph);
+                        }
+                        else
+                        {
+                            story.Paragraphs.Add(currentParagraph);
+                            story.Content.Add(currentParagraph);
+                        }
+                        currentRun = new Nedev.FileConverters.DocxToDoc.Model.RunModel();
+                        currentParagraph.Runs.Add(currentRun);
+                        currentRunBaseProperties = CloneCharacterProperties(currentRun.Properties);
+                    }
+                    else if (localName == "altChunk")
+                    {
+                        AppendHeaderFooterAltChunk(reader.GetAttribute("r:id"));
+                    }
+                    else if (localName == "r" && currentParagraph != null)
+                    {
+                        currentRun = new Nedev.FileConverters.DocxToDoc.Model.RunModel();
+                        currentParagraph.Runs.Add(currentRun);
+                        currentRunBaseProperties = CloneCharacterProperties(currentRun.Properties);
+                    }
+                    else if (currentRun != null && TryApplyRunFormattingElement(reader, currentRun))
+                    {
+                        if (currentRunBaseProperties != null)
+                        {
+                            TryApplyRunFormattingElement(reader, currentRunBaseProperties);
+                        }
+                    }
+                    else if (localName == "hyperlink" && currentParagraph != null)
+                    {
+                        string? relId = reader.GetAttribute("r:id");
+                        string? anchor = reader.GetAttribute("w:anchor");
+                        string? tooltip = reader.GetAttribute("w:tooltip");
+
+                        var hyperlink = new Nedev.FileConverters.DocxToDoc.Model.HyperlinkModel
+                        {
+                            RelationshipId = relId,
+                            Anchor = anchor,
+                            Tooltip = tooltip
+                        };
+
+                        while (reader.Read())
+                        {
+                            if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "r")
+                            {
+                                var run = new Nedev.FileConverters.DocxToDoc.Model.RunModel();
+                                run.Hyperlink = hyperlink;
+                                var runBaseProperties = CloneCharacterProperties(run.Properties);
+                                currentParagraph.Runs.Add(run);
+
+                                while (reader.Read())
+                                {
+                                    if (reader.NodeType == XmlNodeType.Element)
+                                    {
+                                        if (reader.LocalName == "t" || reader.LocalName == "delText" || reader.LocalName == "tab" || reader.LocalName == "ptab" || reader.LocalName == "br" || reader.LocalName == "cr" || reader.LocalName == "noBreakHyphen" || reader.LocalName == "softHyphen" || reader.LocalName == "sym")
+                                        {
+                                            AppendHeaderFooterRunTextFragment(currentParagraph, ref run, runBaseProperties, reader, hyperlink);
+                                        }
+                                        else if (reader.LocalName == "drawing")
+                                        {
+                                            var (image, textBoxText) = ParseDrawing(reader);
+                                            if (image != null)
+                                            {
+                                                run.Image = image;
+                                                LoadImageData(image, storyRelationships, storyEntryPath);
+                                                pendingSummaryWhitespaceCollapse = true;
+                                            }
+                                            if (!string.IsNullOrEmpty(textBoxText))
+                                            {
+                                                AppendRunTextSegment(currentParagraph, ref run, runBaseProperties, storyText, textBoxText, hyperlink);
+                                            }
+                                        }
+                                        else if (reader.LocalName == "pict")
+                                        {
+                                            var (image, textBoxText) = ParsePict(reader);
+                                            if (image != null)
+                                            {
+                                                run.Image = image;
+                                                LoadImageData(image, storyRelationships, storyEntryPath);
+                                                pendingSummaryWhitespaceCollapse = true;
+                                            }
+                                            if (!string.IsNullOrEmpty(textBoxText))
+                                            {
+                                                AppendRunTextSegment(currentParagraph, ref run, runBaseProperties, storyText, textBoxText, hyperlink);
+                                            }
+                                        }
+                                        else if (TryApplyRunFormattingElement(reader, run))
+                                        {
+                                            TryApplyRunFormattingElement(reader, runBaseProperties);
+                                        }
+                                    }
+                                    else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "r")
+                                    {
+                                        break;
+                                    }
+
+                                    if (reader.Depth < 4)
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                            else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "hyperlink")
+                            {
+                                break;
+                            }
+
+                            if (reader.Depth < 3)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    else if (localName == "fldSimple" && currentParagraph != null)
+                    {
+                        var field = CreateFieldModel(
+                            reader.GetAttribute("w:instr") ?? string.Empty,
+                            reader.GetAttribute("w:fldLock"),
+                            reader.GetAttribute("w:dirty"));
+
+                        currentParagraph.Runs.Add(CreateFieldMarkerRun(field, isFieldBegin: true));
+                        currentParagraph.Runs.Add(CreateFieldMarkerRun(field, isFieldSeparate: true));
+
+                        if (reader.IsEmptyElement)
+                        {
+                            currentParagraph.Runs.Add(CreateFieldMarkerRun(field, isFieldEnd: true));
+                        }
+                        else
+                        {
+                            simpleFields.Push((currentParagraph, field));
+                        }
+                    }
+                    else if ((localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym") &&
+                             currentRun != null &&
+                             currentParagraph != null)
+                    {
+                        AppendHeaderFooterRunTextFragment(
+                            currentParagraph,
+                            ref currentRun,
+                            currentRunBaseProperties ?? currentRun.Properties,
+                            reader);
+                    }
+                    else if (localName == "drawing" && currentRun != null)
+                    {
+                        var (image, textBoxText) = ParseDrawing(reader);
+                        if (image != null)
+                        {
+                            currentRun.Image = image;
+                            LoadImageData(image, storyRelationships, storyEntryPath);
+                            pendingSummaryWhitespaceCollapse = true;
+                        }
+                        if (!string.IsNullOrEmpty(textBoxText) && currentParagraph != null && currentRunBaseProperties != null)
+                        {
+                            AppendRunTextSegment(currentParagraph, ref currentRun, currentRunBaseProperties, storyText, textBoxText);
+                        }
+                    }
+                    else if (localName == "pict" && currentRun != null)
+                    {
+                        var (image, textBoxText) = ParsePict(reader);
+                        if (image != null)
+                        {
+                            currentRun.Image = image;
+                            LoadImageData(image, storyRelationships, storyEntryPath);
+                            pendingSummaryWhitespaceCollapse = true;
+                        }
+                        if (!string.IsNullOrEmpty(textBoxText) && currentParagraph != null && currentRunBaseProperties != null)
+                        {
+                            AppendRunTextSegment(currentParagraph, ref currentRun, currentRunBaseProperties, storyText, textBoxText);
+                        }
+                    }
+                    else if (localName == "fldChar" && currentRun != null)
+                    {
+                        string? fldCharType = reader.GetAttribute("w:fldCharType");
+                        string? fldLock = reader.GetAttribute("w:fldLock");
+                        string? fldDirty = reader.GetAttribute("w:dirty");
+
+                        switch (fldCharType)
+                        {
+                            case "begin":
+                                currentRun.IsFieldBegin = true;
+                                currentRun.Field = CreateFieldModel(string.Empty, fldLock, fldDirty);
+                                openFields.Push(currentRun.Field);
+                                break;
+                            case "separate":
+                                currentRun.IsFieldSeparate = true;
+                                if (openFields.Count > 0)
+                                {
+                                    currentRun.Field = openFields.Peek();
+                                }
+                                break;
+                            case "end":
+                                currentRun.IsFieldEnd = true;
+                                if (openFields.Count > 0)
+                                {
+                                    currentRun.Field = openFields.Pop();
+                                }
+                                break;
+                        }
+                    }
+                    else if (localName == "instrText" && currentRun != null && openFields.Count > 0)
+                    {
+                        string instruction = ReadCurrentElementString(reader);
+                        var activeField = openFields.Peek();
+                        currentRun.Field = activeField;
+                        activeField.Instruction += instruction;
+                        activeField.Type = ParseFieldType(activeField.Instruction);
+                    }
+                }
+                else if (reader.NodeType == XmlNodeType.EndElement)
+                {
+                    if (reader.LocalName == "r")
+                    {
+                        currentRunBaseProperties = null;
+                    }
+                    else if (reader.LocalName == "fldSimple" && simpleFields.Count > 0)
+                    {
+                        var (paragraph, field) = simpleFields.Pop();
+                        paragraph.Runs.Add(CreateFieldMarkerRun(field, isFieldEnd: true));
+                    }
+                    else if (reader.LocalName == "tc")
+                    {
+                        currentCell = null;
+                    }
+                    else if (reader.LocalName == "tr")
+                    {
+                        currentRow = null;
+                    }
+                    else if (reader.LocalName == "tbl")
+                    {
+                        currentTable = null;
+                    }
+                    else if (reader.LocalName == "tblCellMar")
+                    {
+                        insideTableCellMargins = false;
+                    }
+                    else if (reader.LocalName == "tblBorders")
+                    {
+                        insideTableBorders = false;
+                    }
+                    else if (reader.LocalName == "tcMar")
+                    {
+                        insideCellMargins = false;
+                    }
+                    else if (reader.LocalName == "tcBorders")
+                    {
+                        insideCellBorders = false;
+                    }
+                }
+            }
+
+            story.Text = storyText.ToString();
+            return story;
+
+            void AppendHeaderFooterAltChunk(string? relationshipId)
+            {
+                foreach (var block in ReadAltChunkBlocks(relationshipId, storyRelationships, storyEntryPath))
+                {
+                    if (currentCell != null)
+                    {
+                        AppendAltChunkBlockToCell(currentCell, block);
+                        foreach (var paragraph in EnumerateAltChunkBlockParagraphs(block))
+                        {
+                            AppendAltChunkParagraph(paragraph, addToStoryContent: false);
+                        }
+                    }
+                    else
+                    {
+                        foreach (var paragraph in EnumerateAltChunkBlockParagraphs(block))
+                        {
+                            AppendAltChunkParagraph(paragraph, addToStoryContent: false);
+                        }
+
+                        story.Content.Add(block);
+                        if (block is Nedev.FileConverters.DocxToDoc.Model.ParagraphModel blockParagraph)
+                        {
+                            story.Paragraphs.Add(blockParagraph);
+                        }
+                    }
+                }
+
+                currentParagraph = null;
+                currentRun = null;
+                currentRunBaseProperties = null;
+                pendingSummaryWhitespaceCollapse = false;
+            }
+
+            void AppendAltChunkParagraph(
+                Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph,
+                bool addToStoryContent)
+            {
+                if (storyParagraphCount > 0)
+                {
+                    storyText.Append('\r');
+                }
+
+                storyParagraphCount++;
+                if (addToStoryContent)
+                {
+                    story.Paragraphs.Add(paragraph);
+                    story.Content.Add(paragraph);
+                }
+
+                storyText.Append(GetParagraphVisibleText(paragraph));
+            }
+
+            void AppendHeaderFooterRunTextFragment(
+                Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph,
+                ref Nedev.FileConverters.DocxToDoc.Model.RunModel run,
+                Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties baseProperties,
+                XmlReader xmlReader,
+                Nedev.FileConverters.DocxToDoc.Model.HyperlinkModel? hyperlink = null)
+            {
+                string text = ReadRunTextFragment(xmlReader);
+                if (string.IsNullOrEmpty(text))
+                {
+                    return;
+                }
+
+                if (pendingSummaryWhitespaceCollapse &&
+                    storyText.Length > 0 &&
+                    char.IsWhiteSpace(storyText[^1]) &&
+                    char.IsWhiteSpace(text[0]))
+                {
+                    text = text.Substring(1);
+                    if (text.Length == 0)
+                    {
+                        pendingSummaryWhitespaceCollapse = false;
+                        return;
+                    }
+                }
+
+                pendingSummaryWhitespaceCollapse = false;
+
+                string? fragmentFontName = ResolveFragmentFontName(xmlReader, baseProperties);
+                if (ShouldStartNewTextSegment(run, fragmentFontName))
+                {
+                    run = CreateTextSegmentRun(paragraph, baseProperties, hyperlink, fragmentFontName);
+                }
+                else if (run.Text.Length == 0 && xmlReader.LocalName == "sym" && !string.IsNullOrEmpty(fragmentFontName))
+                {
+                    run.Properties.FontName = fragmentFontName;
+                }
+
+                AppendRunText(run, storyText, text, hyperlink);
+            }
+        }
+
+        private static string ResolvePartTargetPath(string sourcePartEntryPath, string target)
+        {
+            if (string.IsNullOrEmpty(target))
+            {
+                return target;
+            }
+
+            if (target.StartsWith("/", StringComparison.Ordinal))
+            {
+                return target.Substring(1);
+            }
+
+            string? sourceDirectory = Path.GetDirectoryName(sourcePartEntryPath)?.Replace('\\', '/');
+            string combined = string.IsNullOrEmpty(sourceDirectory)
+                ? target
+                : $"{sourceDirectory}/{target}";
+
+            var normalizedSegments = new List<string>();
+            foreach (string segment in combined.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (segment == ".")
+                {
+                    continue;
+                }
+
+                if (segment == "..")
+                {
+                    if (normalizedSegments.Count > 0)
+                    {
+                        normalizedSegments.RemoveAt(normalizedSegments.Count - 1);
+                    }
+
+                    continue;
+                }
+
+                normalizedSegments.Add(segment);
+            }
+
+            return string.Join("/", normalizedSegments);
+        }
+
+        private static void ResolveHeaderFooterStoryHyperlinks(
+            Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel story,
+            IReadOnlyDictionary<string, string> relationships)
+        {
+            if (relationships.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var paragraph in EnumerateHeaderFooterStoryParagraphs(story))
+            {
+                foreach (var run in paragraph.Runs)
+                {
+                    var hyperlink = run.Hyperlink;
+                    if (hyperlink == null ||
+                        string.IsNullOrEmpty(hyperlink.RelationshipId) ||
+                        !string.IsNullOrEmpty(hyperlink.TargetUrl))
+                    {
+                        continue;
+                    }
+
+                    if (relationships.TryGetValue(hyperlink.RelationshipId, out string? target) &&
+                        !string.IsNullOrEmpty(target))
+                    {
+                        hyperlink.TargetUrl = target;
+                    }
+                }
+            }
+        }
+
+        private void AppendAltChunkContent(
+            string? relationshipId,
+            Nedev.FileConverters.DocxToDoc.Model.DocumentModel docModel,
+            Nedev.FileConverters.DocxToDoc.Model.TableCellModel? currentCell,
+            StringBuilder textBuffer)
+        {
+            foreach (var block in ReadAltChunkBlocks(relationshipId, _relationships, "word/document.xml"))
+            {
+                if (currentCell != null)
+                {
+                    AppendAltChunkBlockToCell(currentCell, block);
+                    AppendAltChunkBlockTextBuffer(block, textBuffer);
+                }
+                else
+                {
+                    docModel.Content.Add(block);
+                    if (block is Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph)
+                    {
+                        docModel.Paragraphs.Add(paragraph);
+                    }
+
+                    AppendAltChunkBlockTextBuffer(block, textBuffer);
+                }
+            }
+        }
+
+        private static void AppendAltChunkBlockToCell(Nedev.FileConverters.DocxToDoc.Model.TableCellModel cell, object block)
+        {
+            cell.Content.Add(block);
+            foreach (var paragraph in EnumerateAltChunkBlockParagraphs(block))
+            {
+                cell.Paragraphs.Add(paragraph);
+            }
+        }
+
+        private static IEnumerable<object> EnumerateTableCellBlocks(Nedev.FileConverters.DocxToDoc.Model.TableCellModel cell)
+        {
+            if (cell.Content.Count > 0)
+            {
+                foreach (var block in cell.Content)
+                {
+                    yield return block;
+                }
+
+                yield break;
+            }
+
+            foreach (var paragraph in cell.Paragraphs)
+            {
+                yield return paragraph;
+            }
+        }
+
+        private IEnumerable<object> ReadAltChunkBlocks(
+            string? relationshipId,
+            IReadOnlyDictionary<string, string> relationships,
+            string sourcePartEntryPath)
+        {
+            if (string.IsNullOrEmpty(relationshipId) || !relationships.TryGetValue(relationshipId, out string? target) || string.IsNullOrEmpty(target))
+            {
+                yield break;
+            }
+
+            string entryPath = ResolvePartTargetPath(sourcePartEntryPath, target);
+            if (!IsSupportedAltChunkEntryPath(entryPath))
+            {
+                yield break;
+            }
+
+            var entry = _archive.GetEntry(entryPath);
+            if (entry == null)
+            {
+                yield break;
+            }
+
+            if (Path.GetExtension(entryPath).Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var block in ReadEmbeddedDocxAltChunkBlocks(entry))
+                {
+                    yield return block;
+                }
+
+                yield break;
+            }
+
+            using var stream = entry.Open();
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string content = reader.ReadToEnd();
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                yield break;
+            }
+
+            IEnumerable<string> paragraphTexts = LooksLikeRtfContent(entryPath, content)
+                ? ExtractAltChunkRtfParagraphTexts(content)
+                : LooksLikeMarkupContent(entryPath, content)
+                    ? ExtractAltChunkMarkupParagraphTexts(content)
+                    : ExtractPlainTextParagraphTexts(content);
+
+            foreach (string paragraphText in paragraphTexts)
+            {
+                var paragraph = new Nedev.FileConverters.DocxToDoc.Model.ParagraphModel();
+                if (!string.IsNullOrEmpty(paragraphText))
+                {
+                    paragraph.Runs.Add(new Nedev.FileConverters.DocxToDoc.Model.RunModel
+                    {
+                        Text = paragraphText
+                    });
+                }
+
+                yield return paragraph;
+            }
+        }
+
+        private IEnumerable<object> ReadEmbeddedDocxAltChunkBlocks(ZipArchiveEntry entry)
+        {
+            using var chunkStream = entry.Open();
+            using var chunkCopy = new MemoryStream();
+            chunkStream.CopyTo(chunkCopy);
+            chunkCopy.Position = 0;
+
+            Nedev.FileConverters.DocxToDoc.Model.DocumentModel nestedModel;
+            try
+            {
+                using var nestedReader = new DocxReader(chunkCopy);
+                nestedModel = nestedReader.ReadDocument();
+            }
+            catch (InvalidDataException)
+            {
+                yield break;
+            }
+            catch (FileNotFoundException)
+            {
+                yield break;
+            }
+            catch (XmlException)
+            {
+                yield break;
+            }
+
+            foreach (var block in nestedModel.Content)
+            {
+                if (block is Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph)
+                {
+                    if (!string.IsNullOrEmpty(GetParagraphVisibleText(paragraph)))
+                    {
+                        yield return paragraph;
+                    }
+                }
+                else if (block is Nedev.FileConverters.DocxToDoc.Model.TableModel table &&
+                         EnumerateAltChunkBlockParagraphs(table).Any(paragraph => !string.IsNullOrEmpty(GetParagraphVisibleText(paragraph))))
+                {
+                    yield return table;
+                }
+            }
+        }
+
+        private static IEnumerable<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel> EnumerateAltChunkBlockParagraphs(object block)
+        {
+            if (block is Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph)
+            {
+                yield return paragraph;
+                yield break;
+            }
+
+            if (block is Nedev.FileConverters.DocxToDoc.Model.TableModel table)
+            {
+                foreach (var row in table.Rows)
+                {
+                    foreach (var cell in row.Cells)
+                    {
+                        foreach (var cellBlock in EnumerateTableCellBlocks(cell))
+                        {
+                            foreach (var cellParagraph in EnumerateAltChunkBlockParagraphs(cellBlock))
+                            {
+                                yield return cellParagraph;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void AppendAltChunkBlockTextBuffer(object block, StringBuilder textBuffer)
+        {
+            foreach (var paragraph in EnumerateAltChunkBlockParagraphs(block))
+            {
+                AppendParagraphTextBuffer(paragraph, textBuffer);
+            }
+        }
+
+        private static string GetParagraphVisibleText(Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph)
+        {
+            var text = new StringBuilder();
+            foreach (var run in paragraph.Runs)
+            {
+                if (!string.IsNullOrEmpty(run.Text))
+                {
+                    text.Append(run.Text);
+                }
+            }
+
+            return text.ToString();
+        }
+
+        private static void AppendParagraphTextBuffer(
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph,
+            StringBuilder textBuffer)
+        {
+            textBuffer.Append(GetParagraphVisibleText(paragraph));
+            textBuffer.Append('\r');
+        }
+
+        private static bool IsSupportedAltChunkEntryPath(string entryPath)
+        {
+            string extension = Path.GetExtension(entryPath);
+            return extension.Equals(".txt", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".text", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".docx", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".rtf", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".htm", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".html", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".xhtml", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".xml", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LooksLikeRtfContent(string entryPath, string content)
+        {
+            return content.AsSpan().TrimStart().StartsWith(@"{\rtf", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LooksLikeMarkupContent(string entryPath, string content)
+        {
+            string extension = Path.GetExtension(entryPath);
+            if (extension.Equals(".html", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".htm", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".xhtml", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return content.AsSpan().TrimStart().StartsWith("<", StringComparison.Ordinal);
+        }
+
+        private static IEnumerable<string> ExtractPlainTextParagraphTexts(string content)
+        {
+            foreach (string paragraph in content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                string normalized = paragraph.Trim();
+                if (!string.IsNullOrEmpty(normalized))
+                {
+                    yield return normalized;
+                }
+            }
+        }
+
+        private static IEnumerable<string> ExtractAltChunkMarkupParagraphTexts(string markup)
+        {
+            string text = Regex.Replace(markup, "<\\s*(script|style)\\b[^>]*>.*?<\\s*/\\s*\\1\\s*>", string.Empty, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            text = Regex.Replace(text, "<\\s*br\\b[^>]*>", "\n", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, "<\\s*/\\s*(p|div|li|tr|table|section|article|header|footer|h[1-6]|ul|ol)\\s*>", "\n", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, "<\\s*/\\s*(td|th)\\s*>", " ", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, "<[^>]+>", string.Empty, RegexOptions.Singleline);
+            text = WebUtility.HtmlDecode(text).Replace('\u00A0', ' ');
+            text = text.Replace("\r\n", "\n").Replace('\r', '\n');
+
+            foreach (string paragraph in text.Split('\n'))
+            {
+                string normalized = Regex.Replace(paragraph, "\\s+", " ").Trim();
+                if (!string.IsNullOrEmpty(normalized))
+                {
+                    yield return normalized;
+                }
+            }
+        }
+
+        private static IEnumerable<string> ExtractAltChunkRtfParagraphTexts(string rtf)
+        {
+            var text = new StringBuilder();
+            var stateStack = new Stack<RtfGroupState>();
+            var currentState = new RtfGroupState
+            {
+                UnicodeFallbackSkipCount = 1
+            };
+            int pendingUnicodeFallbackChars = 0;
+
+            for (int i = 0; i < rtf.Length; i++)
+            {
+                char current = rtf[i];
+                if (current == '{')
+                {
+                    stateStack.Push(currentState);
+                    currentState.AtStartOfGroup = true;
+                    pendingUnicodeFallbackChars = 0;
+                    continue;
+                }
+
+                if (current == '}')
+                {
+                    currentState = stateStack.Count > 0
+                        ? stateStack.Pop()
+                        : CreateDefaultRtfGroupState();
+                    pendingUnicodeFallbackChars = 0;
+                    continue;
+                }
+
+                if (current == '\r' || current == '\n')
+                {
+                    continue;
+                }
+
+                if (current == '\\')
+                {
+                    if (i + 1 >= rtf.Length)
+                    {
+                        break;
+                    }
+
+                    i++;
+                    char escaped = rtf[i];
+                    if (escaped == '\\' || escaped == '{' || escaped == '}')
+                    {
+                        AppendRtfVisibleCharacter(text, escaped, currentState.Skip, ref pendingUnicodeFallbackChars);
+                        currentState.AtStartOfGroup = false;
+                        continue;
+                    }
+
+                    if (escaped == '\'')
+                    {
+                        if (i + 2 < rtf.Length &&
+                            IsHexDigit(rtf[i + 1]) &&
+                            IsHexDigit(rtf[i + 2]))
+                        {
+                            byte value = byte.Parse(rtf.Substring(i + 1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                            AppendRtfVisibleCharacter(text, (char)value, currentState.Skip, ref pendingUnicodeFallbackChars);
+                            i += 2;
+                        }
+
+                        currentState.AtStartOfGroup = false;
+                        continue;
+                    }
+
+                    if (escaped == '*')
+                    {
+                        currentState.Skip = true;
+                        currentState.AtStartOfGroup = false;
+                        continue;
+                    }
+
+                    if (!char.IsLetter(escaped))
+                    {
+                        HandleRtfControlSymbol(text, escaped, currentState.Skip, ref pendingUnicodeFallbackChars);
+                        currentState.AtStartOfGroup = false;
+                        continue;
+                    }
+
+                    int controlStart = i;
+                    while (i < rtf.Length && char.IsLetter(rtf[i]))
+                    {
+                        i++;
+                    }
+
+                    string controlWord = rtf.Substring(controlStart, i - controlStart);
+                    int? numericArgument = null;
+                    int numericStart = i;
+                    if (i < rtf.Length && (rtf[i] == '-' || char.IsDigit(rtf[i])))
+                    {
+                        i++;
+                        while (i < rtf.Length && char.IsDigit(rtf[i]))
+                        {
+                            i++;
+                        }
+
+                        if (int.TryParse(rtf.Substring(numericStart, i - numericStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedValue))
+                        {
+                            numericArgument = parsedValue;
+                        }
+                    }
+
+                    bool hasDelimiterSpace = i < rtf.Length && rtf[i] == ' ';
+                    if (!hasDelimiterSpace)
+                    {
+                        i--;
+                    }
+
+                    HandleRtfControlWord(text, controlWord, numericArgument, ref currentState, ref pendingUnicodeFallbackChars);
+                    currentState.AtStartOfGroup = false;
+                    continue;
+                }
+
+                AppendRtfVisibleCharacter(text, current, currentState.Skip, ref pendingUnicodeFallbackChars);
+                currentState.AtStartOfGroup = false;
+            }
+
+            foreach (string paragraph in text.ToString().Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                string normalized = Regex.Replace(paragraph, "\\s+", " ").Trim();
+                if (!string.IsNullOrEmpty(normalized))
+                {
+                    yield return normalized;
+                }
+            }
+        }
+
+        private static void HandleRtfControlWord(
+            StringBuilder text,
+            string controlWord,
+            int? numericArgument,
+            ref RtfGroupState currentState,
+            ref int pendingUnicodeFallbackChars)
+        {
+            if (currentState.AtStartOfGroup && IsIgnorableRtfDestination(controlWord))
+            {
+                currentState.Skip = true;
+                return;
+            }
+
+            switch (controlWord)
+            {
+                case "uc":
+                    if (numericArgument.HasValue && numericArgument.Value >= 0)
+                    {
+                        currentState.UnicodeFallbackSkipCount = numericArgument.Value;
+                    }
+
+                    return;
+                case "u":
+                    if (!currentState.Skip && numericArgument.HasValue)
+                    {
+                        int value = numericArgument.Value;
+                        if (value < 0)
+                        {
+                            value += 65536;
+                        }
+
+                        text.Append(char.ConvertFromUtf32(ClampRtfUnicodeCodePoint(value)));
+                        pendingUnicodeFallbackChars = currentState.UnicodeFallbackSkipCount;
+                    }
+
+                    return;
+                case "par":
+                case "line":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\n');
+                    }
+
+                    pendingUnicodeFallbackChars = 0;
+                    return;
+                case "tab":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\t');
+                    }
+
+                    return;
+                case "emdash":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u2014');
+                    }
+
+                    return;
+                case "endash":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u2013');
+                    }
+
+                    return;
+                case "bullet":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u2022');
+                    }
+
+                    return;
+                case "lquote":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u2018');
+                    }
+
+                    return;
+                case "rquote":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u2019');
+                    }
+
+                    return;
+                case "ldblquote":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u201C');
+                    }
+
+                    return;
+                case "rdblquote":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\u201D');
+                    }
+
+                    return;
+                case "cell":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\t');
+                    }
+
+                    return;
+                case "row":
+                    if (!currentState.Skip)
+                    {
+                        text.Append('\n');
+                    }
+
+                    return;
+            }
+        }
+
+        private static void HandleRtfControlSymbol(
+            StringBuilder text,
+            char controlSymbol,
+            bool skip,
+            ref int pendingUnicodeFallbackChars)
+        {
+            if (skip)
+            {
+                return;
+            }
+
+            switch (controlSymbol)
+            {
+                case '~':
+                    text.Append(' ');
+                    return;
+                case '_':
+                    text.Append('\u2011');
+                    return;
+                case '-':
+                    return;
+            }
+
+            AppendRtfVisibleCharacter(text, controlSymbol, skip, ref pendingUnicodeFallbackChars);
+        }
+
+        private static void AppendRtfVisibleCharacter(
+            StringBuilder text,
+            char character,
+            bool skip,
+            ref int pendingUnicodeFallbackChars)
+        {
+            if (skip)
+            {
+                return;
+            }
+
+            if (pendingUnicodeFallbackChars > 0)
+            {
+                pendingUnicodeFallbackChars--;
+                return;
+            }
+
+            text.Append(character);
+        }
+
+        private static bool IsIgnorableRtfDestination(string controlWord)
+        {
+            return controlWord.Equals("fonttbl", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("colortbl", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("stylesheet", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("info", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("pict", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("object", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("header", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("footer", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("headerl", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("headerr", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("headerf", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("footerl", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("footerr", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("footerf", StringComparison.OrdinalIgnoreCase) ||
+                   controlWord.Equals("annotation", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsHexDigit(char c)
+        {
+            return (c >= '0' && c <= '9') ||
+                   (c >= 'A' && c <= 'F') ||
+                   (c >= 'a' && c <= 'f');
+        }
+
+        private static int ClampRtfUnicodeCodePoint(int value)
+        {
+            if (value < 0)
+            {
+                return 0;
+            }
+
+            if (value > 0x10FFFF)
+            {
+                return 0x10FFFF;
+            }
+
+            return value;
+        }
+
+        private static RtfGroupState CreateDefaultRtfGroupState()
+        {
+            return new RtfGroupState
+            {
+                UnicodeFallbackSkipCount = 1
+            };
+        }
+
+        private struct RtfGroupState
+        {
+            public bool Skip;
+            public int UnicodeFallbackSkipCount;
+            public bool AtStartOfGroup;
+        }
+
+        private static IEnumerable<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel> EnumerateHeaderFooterStoryParagraphs(
+            Nedev.FileConverters.DocxToDoc.Model.HeaderFooterStoryModel story)
+        {
+            if (story.Content.Count == 0)
+            {
+                foreach (var paragraph in story.Paragraphs)
+                {
+                    yield return paragraph;
+                }
+
+                yield break;
+            }
+
+            foreach (var block in story.Content)
+            {
+                if (block is Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph)
+                {
+                    yield return paragraph;
+                }
+                else if (block is Nedev.FileConverters.DocxToDoc.Model.TableModel table)
+                {
+                    foreach (var row in table.Rows)
+                    {
+                        foreach (var cell in row.Cells)
+                        {
+                            foreach (var cellBlock in EnumerateTableCellBlocks(cell))
+                            {
+                                foreach (var cellParagraph in EnumerateAltChunkBlockParagraphs(cellBlock))
+                                {
+                                    yield return cellParagraph;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static string ReadSecondaryStoryText(Stream storyStream)
+        {
+            using var reader = XmlReader.Create(storyStream, new XmlReaderSettings { IgnoreWhitespace = true });
+            var text = new StringBuilder();
+            int paragraphCount = 0;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element)
+                {
+                    continue;
+                }
+
+                string localName = reader.LocalName;
+                if (localName == "p")
+                {
+                    if (paragraphCount > 0)
+                    {
+                        text.Append('\r');
+                    }
+
+                    paragraphCount++;
+                }
+                else if (IsNoteTextFragmentElement(localName))
+                {
+                    text.Append(ReadRunTextFragment(reader));
+                }
+            }
+
+            return text.ToString();
         }
 
         private static int ResolveGridWidth(IReadOnlyList<int> gridColumnWidths, int startIndex, int gridSpan)
@@ -923,6 +2456,28 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             else if (run.Text.Length == 0 && reader.LocalName == "sym" && !string.IsNullOrEmpty(fragmentFontName))
             {
                 run.Properties.FontName = fragmentFontName;
+            }
+
+            AppendRunText(run, textBuffer, text, hyperlink);
+        }
+
+        private static void AppendRunTextSegment(
+            Nedev.FileConverters.DocxToDoc.Model.ParagraphModel paragraph,
+            ref Nedev.FileConverters.DocxToDoc.Model.RunModel run,
+            Nedev.FileConverters.DocxToDoc.Model.RunModel.CharacterProperties baseProperties,
+            StringBuilder textBuffer,
+            string text,
+            Nedev.FileConverters.DocxToDoc.Model.HyperlinkModel? hyperlink = null)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            string? fragmentFontName = baseProperties.FontName;
+            if (ShouldStartNewTextSegment(run, fragmentFontName))
+            {
+                run = CreateTextSegmentRun(paragraph, baseProperties, hyperlink, fragmentFontName);
             }
 
             AppendRunText(run, textBuffer, text, hyperlink);
@@ -1267,6 +2822,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                                     pendingCustomMarkText ??= new StringBuilder();
                                     pendingCustomMarkText.Append(customMarkTextFragment);
                                 }
+                                else if (pendingCustomMarkText != null && pendingCustomMarkText.Length > 0)
+                                {
+                                    CommitPendingCustomMark();
+                                }
+                                else
+                                {
+                                    pendingCustomMarkNote = default;
+                                    pendingCustomMarkText = null;
+                                }
                             }
                             else
                             {
@@ -1384,6 +2948,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             if (string.IsNullOrWhiteSpace(text))
             {
                 return null;
+            }
+
+            foreach (char ch in text)
+            {
+                if (char.IsControl(ch))
+                {
+                    return null;
+                }
             }
 
             return text;
@@ -1637,13 +3209,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
         }
 
-        private Nedev.FileConverters.DocxToDoc.Model.ImageModel? ParseDrawing(XmlReader reader)
+        private (Nedev.FileConverters.DocxToDoc.Model.ImageModel? image, string textBoxText) ParseDrawing(XmlReader reader)
         {
             var image = new Nedev.FileConverters.DocxToDoc.Model.ImageModel();
             string? relId = null;
             int width = 0;
             int height = 0;
             string? currentPositionAxis = null;
+            var textBoxText = new StringBuilder();
 
             // Read the entire drawing element subtree
             while (reader.Read())
@@ -1740,6 +3313,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         image.WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.TopAndBottom;
                     }
+                    else if (localName == "txbxContent")
+                    {
+                        AppendTextBoxVisibleText(reader, textBoxText);
+                        continue;
+                    }
                 }
                 else if (reader.NodeType == XmlNodeType.EndElement && (reader.LocalName == "positionH" || reader.LocalName == "positionV"))
                 {
@@ -1754,16 +3332,19 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (reader.Depth < 3) break;
             }
 
-            if (string.IsNullOrEmpty(relId)) return null;
+            if (string.IsNullOrEmpty(relId))
+            {
+                return (null, textBoxText.ToString());
+            }
 
             image.RelationshipId = relId;
             image.Width = width;
             image.Height = height;
 
-            return image;
+            return (image, textBoxText.ToString());
         }
 
-        private Nedev.FileConverters.DocxToDoc.Model.ImageModel? ParsePict(XmlReader reader)
+        private (Nedev.FileConverters.DocxToDoc.Model.ImageModel? image, string textBoxText) ParsePict(XmlReader reader)
         {
             var image = new Nedev.FileConverters.DocxToDoc.Model.ImageModel
             {
@@ -1771,6 +3352,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 WrapType = Nedev.FileConverters.DocxToDoc.Model.ImageWrapType.Inline
             };
             string? relId = null;
+            var textBoxText = new StringBuilder();
 
             while (reader.Read())
             {
@@ -1786,6 +3368,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                     {
                         relId = reader.GetAttribute("r:id");
                     }
+                    else if (localName == "txbxContent")
+                    {
+                        AppendTextBoxVisibleText(reader, textBoxText);
+                        continue;
+                    }
                 }
                 else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "pict")
                 {
@@ -1795,9 +3382,73 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 if (reader.Depth < 3) break;
             }
 
-            if (string.IsNullOrEmpty(relId)) return null;
+            if (string.IsNullOrEmpty(relId))
+            {
+                return (null, textBoxText.ToString());
+            }
             image.RelationshipId = relId;
-            return image;
+            return (image, textBoxText.ToString());
+        }
+
+        private static void AppendTextBoxVisibleText(XmlReader reader, StringBuilder textBoxText)
+        {
+            if (reader.IsEmptyElement)
+            {
+                return;
+            }
+
+            int textBoxDepth = reader.Depth;
+            bool seenParagraph = false;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType == XmlNodeType.Element)
+                {
+                    string localName = reader.LocalName;
+                    if (localName == "p")
+                    {
+                        if (seenParagraph)
+                        {
+                            AppendTextBoxSeparator(textBoxText, ' ');
+                        }
+
+                        seenParagraph = true;
+                    }
+                    else if (localName == "t" || localName == "delText" || localName == "tab" || localName == "ptab" || localName == "br" || localName == "cr" || localName == "noBreakHyphen" || localName == "softHyphen" || localName == "sym")
+                    {
+                        string text = ReadRunTextFragment(reader);
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            textBoxText.Append(text);
+                        }
+
+                        continue;
+                    }
+                }
+                else if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "txbxContent")
+                {
+                    break;
+                }
+
+                if (reader.Depth < textBoxDepth)
+                {
+                    break;
+                }
+            }
+        }
+
+        private static void AppendTextBoxSeparator(StringBuilder textBoxText, char separator)
+        {
+            if (textBoxText.Length == 0)
+            {
+                return;
+            }
+
+            char lastChar = textBoxText[textBoxText.Length - 1];
+            if (!char.IsWhiteSpace(lastChar))
+            {
+                textBoxText.Append(separator);
+            }
         }
 
         private static void ParseShapeStyle(string? style, Nedev.FileConverters.DocxToDoc.Model.ImageModel image)
@@ -1850,11 +3501,18 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private void LoadImageData(Nedev.FileConverters.DocxToDoc.Model.ImageModel image)
         {
-            if (!_relationships.TryGetValue(image.RelationshipId, out string? target))
+            LoadImageData(image, _relationships, "word/document.xml");
+        }
+
+        private void LoadImageData(
+            Nedev.FileConverters.DocxToDoc.Model.ImageModel image,
+            IReadOnlyDictionary<string, string> relationships,
+            string sourcePartEntryPath)
+        {
+            if (!relationships.TryGetValue(image.RelationshipId, out string? target))
                 return;
 
-            // Resolve target path
-            string imagePath = target.StartsWith("/") ? target.Substring(1) : $"word/{target}";
+            string imagePath = ResolvePartTargetPath(sourcePartEntryPath, target);
 
             var entry = _archive.GetEntry(imagePath);
             if (entry == null) return;
@@ -1892,6 +3550,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             {
                 "PAGE" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Page,
                 "NUMPAGES" => Nedev.FileConverters.DocxToDoc.Model.FieldType.NumPages,
+                "SECTIONPAGES" => Nedev.FileConverters.DocxToDoc.Model.FieldType.SectionPages,
                 "DATE" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Date,
                 "TIME" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Time,
                 "AUTHOR" => Nedev.FileConverters.DocxToDoc.Model.FieldType.Author,

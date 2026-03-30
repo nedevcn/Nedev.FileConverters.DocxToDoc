@@ -11,33 +11,55 @@ namespace Nedev.FileConverters.DocxToDoc.Format
     {
         private const int PageSize = 512;
         
-        private readonly List<int> _rgfc = new();
-        private readonly List<byte[]> _rgbx = new();
+        private readonly List<(int startCp, int endCp, byte[] sprms)> _runs = new();
 
         public void AddRow(int startCp, int endCp, byte[] sprms)
         {
-            if (_rgfc.Count == 0 || _rgfc[^1] != startCp)
+            if (endCp <= startCp)
             {
-                _rgfc.Add(startCp);
+                throw new ArgumentOutOfRangeException(nameof(endCp), "TAPX row ranges must have positive length.");
             }
-            _rgfc.Add(endCp);
-            _rgbx.Add(sprms);
+
+            if (_runs.Count > 0 && startCp < _runs[^1].endCp)
+            {
+                throw new InvalidOperationException("TAPX row ranges must be added in non-overlapping CP order.");
+            }
+
+            _runs.Add((startCp, endCp, sprms ?? Array.Empty<byte>()));
         }
 
         public byte[] GeneratePage()
         {
             byte[] page = new byte[PageSize];
             
-            if (_rgfc.Count == 0) return page;
+            if (_runs.Count == 0) return page;
 
-            byte cRun = (byte)(_rgfc.Count - 1);
+            var rgfc = new List<int> { _runs[0].startCp };
+            var sprmRuns = new List<byte[]>();
+            int cursor = _runs[0].startCp;
+
+            foreach (var run in _runs)
+            {
+                if (run.startCp > cursor)
+                {
+                    rgfc.Add(run.startCp);
+                    sprmRuns.Add(Array.Empty<byte>());
+                    cursor = run.startCp;
+                }
+
+                rgfc.Add(run.endCp);
+                sprmRuns.Add(run.sprms);
+                cursor = run.endCp;
+            }
+
+            byte cRun = (byte)sprmRuns.Count;
             
             // Last byte of page is cRun
             page[PageSize - 1] = cRun;
 
             // Write rgfc (cRun + 1 ints)
             int offset = 0;
-            foreach (var fc in _rgfc)
+            foreach (var fc in rgfc)
             {
                 BitConverter.GetBytes(fc).CopyTo(page, offset);
                 offset += 4;
@@ -51,7 +73,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             
             for (int i = 0; i < cRun; i++)
             {
-                byte[] sprm = _rgbx[i];
+                byte[] sprm = sprmRuns[i];
                 
                 // TAPX structure in FKP: [cb (2 bytes)] [grpprl]
                 int grpprlLen = sprm?.Length ?? 0;

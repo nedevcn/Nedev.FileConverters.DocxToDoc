@@ -344,5 +344,45 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.Null(endnote.CustomMarkText);
             Assert.Equal("ABCD\r", model.TextBuffer);
         }
+
+        [Fact]
+        public void ReadDocument_WithEndnoteWhitespaceOnlyCustomMarkFollower_LeavesCustomMarkUnset()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var documentEntry = archive.CreateEntry("word/document.xml");
+                using (var documentStream = documentEntry.Open())
+                using (var writer = new StreamWriter(documentStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>" +
+                                 "<w:r><w:t>AB</w:t></w:r>" +
+                                 "<w:r><w:endnoteReference w:id=\"2\" w:customMarkFollows=\"1\"/></w:r>" +
+                                 "<w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:t xml:space=\"preserve\"> </w:t></w:r>" +
+                                 "<w:r><w:t>CD</w:t></w:r>" +
+                                 "</w:p></w:body></w:document>");
+                }
+
+                var endnotesEntry = archive.CreateEntry("word/endnotes.xml");
+                using (var endnotesStream = endnotesEntry.Open())
+                using (var writer = new StreamWriter(endnotesStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:endnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                                 "<w:endnote w:id=\"2\"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:endnote>" +
+                                 "</w:endnotes>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var endnote = Assert.Single(model.Endnotes);
+            Assert.Null(endnote.CustomMarkText);
+            Assert.Equal("AB CD\r", model.TextBuffer);
+        }
     }
 }

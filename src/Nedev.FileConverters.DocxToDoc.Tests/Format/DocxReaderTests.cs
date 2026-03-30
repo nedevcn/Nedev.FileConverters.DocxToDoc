@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Xml;
 using Xunit;
 
@@ -159,6 +160,911 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void ReadDocument_WithDrawingTextBoxContent_PreservesVisibleText()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                             "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" " +
+                             "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\">" +
+                             "<w:body><w:p>" +
+                             "<w:r><w:t xml:space=\"preserve\">Before </w:t></w:r>" +
+                             "<w:r><w:drawing><wp:anchor><w:txbxContent><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:txbxContent></wp:anchor></w:drawing></w:r>" +
+                             "<w:r><w:t> after</w:t></w:r>" +
+                             "</w:p></w:body></w:document>");
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            var paragraph = Assert.Single(model.Paragraphs);
+            Assert.Collection(
+                paragraph.Runs.FindAll(run => run.Text.Length > 0),
+                run => Assert.Equal("Before ", run.Text),
+                run => Assert.Equal("Box", run.Text),
+                run => Assert.Equal(" after", run.Text));
+            Assert.Equal("Before Box after\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithPlainTextAltChunk_PreservesVisibleParagraphsInOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk1.txt\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk1.txt");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write("Chunk line 1\r\nChunk line 2");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "Chunk line 1", "Chunk line 2", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rChunk line 1\rChunk line 2\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithHtmlAltChunk_PreservesVisibleParagraphsInOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Lead</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>Tail</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk2.html\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk2.html");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write("<html><body><p>Alpha</p><div>Beta <b>Bold</b></div><p>Gamma<br/>Delta</p></body></html>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Lead", "Alpha", "Beta Bold", "Gamma", "Delta", "Tail" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Lead\rAlpha\rBeta Bold\rGamma\rDelta\rTail\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithAltChunkMissingRelationship_IgnoresChunkAndPreservesSurroundingParagraphs()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdMissing\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithAltChunkMissingTargetPart_IgnoresChunkAndPreservesSurroundingParagraphs()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk-missing.txt\"/>" +
+                                 "</Relationships>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithRtfAltChunk_PreservesVisibleParagraphsInOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk3.rtf\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk3.rtf");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write(@"{\rtf1\ansi Chunk line 1\par Chunk line 2}");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "Chunk line 1", "Chunk line 2", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rChunk line 1\rChunk line 2\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithRtfAltChunkUnicodeEscapes_PreservesVisibleParagraphsInOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Lead</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>Tail</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk5.rtf\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk5.rtf");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write(@"{\rtf1\ansi\uc1 Alpha \u945? beta\par Gamma}");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Lead", "Alpha α beta", "Gamma", "Tail" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Lead\rAlpha α beta\rGamma\rTail\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithMalformedRtfAltChunk_DowngradesToPlainTextParagraphs()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk6.rtf\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk6.rtf");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write("Chunk line 1\r\nChunk line 2");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "Chunk line 1", "Chunk line 2", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rChunk line 1\rChunk line 2\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithAltChunkBetweenParagraphAndTable_PreservesMixedContentOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk4.txt\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk4.txt");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write("Chunk line 1\r\nChunk line 2");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Collection(
+                model.Content,
+                block => Assert.Equal("Before", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("Chunk line 1", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("Chunk line 2", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    Assert.Equal("Cell", table.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                },
+                block => Assert.Equal("After", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))));
+
+            Assert.Equal(
+                new[] { "Before", "Chunk line 1", "Chunk line 2", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rChunk line 1\rChunk line 2\rCell\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithRtfAltChunkBetweenParagraphAndTable_PreservesMixedContentOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk7.rtf\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk7.rtf");
+                using (var chunkStream = chunkEntry.Open())
+                using (var writer = new StreamWriter(chunkStream))
+                {
+                    writer.Write(@"{\rtf1\ansi Chunk line 1\par Chunk line 2}");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Collection(
+                model.Content,
+                block => Assert.Equal("Before", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("Chunk line 1", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("Chunk line 2", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    Assert.Equal("Cell", table.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                },
+                block => Assert.Equal("After", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))));
+
+            Assert.Equal(
+                new[] { "Before", "Chunk line 1", "Chunk line 2", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rChunk line 1\rChunk line 2\rCell\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunk_PreservesVisibleParagraphsInOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk8.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk8.docx");
+                using (var chunkStream = chunkEntry.Open())
+                {
+                    byte[] chunkBytes = CreateEmbeddedDocxChunk(includeTable: false);
+                    chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "Inner lead", "Inner tail", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rInner lead\rInner tail\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunkContainingTable_PreservesTableBlocksAndVisibleContentOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk9.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk9.docx");
+                using (var chunkStream = chunkEntry.Open())
+                {
+                    byte[] chunkBytes = CreateEmbeddedDocxChunk(includeTable: true);
+                    chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Collection(
+                model.Content,
+                block => Assert.Equal("Before", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("Inner lead", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    Assert.Equal("Cell", table.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                },
+                block => Assert.Equal("Inner tail", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("After", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))));
+
+            Assert.Equal(
+                new[] { "Before", "Inner lead", "Inner tail", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rInner lead\rCell\rInner tail\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunkMissingTargetPart_IgnoresChunkAndPreservesSurroundingParagraphs()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk-missing.docx\"/>" +
+                                 "</Relationships>");
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithMalformedEmbeddedDocxAltChunk_IgnoresChunkAndPreservesSurroundingParagraphs()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk10.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk10.docx");
+                using var chunkStream = chunkEntry.Open();
+                byte[] chunkBytes = Encoding.UTF8.GetBytes("not-a-zip-package");
+                chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunkMissingDocumentXml_IgnoresChunkAndPreservesSurroundingParagraphs()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk11.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk11.docx");
+                using (var chunkStream = chunkEntry.Open())
+                {
+                    byte[] chunkBytes = CreateEmbeddedDocxChunkWithoutDocumentXml();
+                    chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunkBetweenParagraphAndTable_PreservesMixedContentOrder()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Outer cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk12.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk12.docx");
+                using (var chunkStream = chunkEntry.Open())
+                {
+                    byte[] chunkBytes = CreateEmbeddedDocxChunk(includeTable: true);
+                    chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Collection(
+                model.Content,
+                block => Assert.Equal("Before", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block => Assert.Equal("Inner lead", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    Assert.Equal("Cell", table.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                },
+                block => Assert.Equal("Inner tail", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    Assert.Equal("Outer cell", table.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                },
+                block => Assert.Equal("After", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))));
+
+            Assert.Equal(
+                new[] { "Before", "Inner lead", "Inner tail", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rInner lead\rCell\rInner tail\rOuter cell\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunkInsideTableCell_PreservesTableBlocksInsideCellContent()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:tbl><w:tr><w:tc><w:altChunk r:id=\"rIdChunk\"/></w:tc></w:tr></w:tbl>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk13.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk13.docx");
+                using (var chunkStream = chunkEntry.Open())
+                {
+                    byte[] chunkBytes = CreateEmbeddedDocxChunk(includeTable: true);
+                    chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Collection(
+                model.Content,
+                block => Assert.Equal("Before", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    var cell = table.Rows[0].Cells[0];
+                    Assert.Collection(
+                        cell.Content,
+                        cellBlock => Assert.Equal("Inner lead", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(cellBlock).Runs.Select(run => run.Text))),
+                        cellBlock =>
+                        {
+                            var nestedTable = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(cellBlock);
+                            Assert.Equal("Cell", nestedTable.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                        },
+                        cellBlock => Assert.Equal("Inner tail", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(cellBlock).Runs.Select(run => run.Text))));
+                    Assert.Equal(
+                        new[] { "Inner lead", "Cell", "Inner tail" },
+                        cell.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+                },
+                block => Assert.Equal("After", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))));
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rInner lead\rCell\rInner tail\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
+        public void ReadDocument_WithEmbeddedDocxAltChunkBetweenCellParagraphs_PreservesMixedBlockOrderInsideCellContent()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>" +
+                                 "<w:p><w:r><w:t>Before</w:t></w:r></w:p>" +
+                                 "<w:tbl><w:tr><w:tc>" +
+                                 "<w:p><w:r><w:t>Cell lead</w:t></w:r></w:p>" +
+                                 "<w:altChunk r:id=\"rIdChunk\"/>" +
+                                 "<w:p><w:r><w:t>Cell tail</w:t></w:r></w:p>" +
+                                 "</w:tc></w:tr></w:tbl>" +
+                                 "<w:p><w:r><w:t>After</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+
+                var relsEntry = archive.CreateEntry("word/_rels/document.xml.rels");
+                using (var relsStream = relsEntry.Open())
+                using (var writer = new StreamWriter(relsStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                                 "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                                 "<Relationship Id=\"rIdChunk\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" Target=\"afchunk14.docx\"/>" +
+                                 "</Relationships>");
+                }
+
+                var chunkEntry = archive.CreateEntry("word/afchunk14.docx");
+                using (var chunkStream = chunkEntry.Open())
+                {
+                    byte[] chunkBytes = CreateEmbeddedDocxChunk(includeTable: true);
+                    chunkStream.Write(chunkBytes, 0, chunkBytes.Length);
+                }
+            }
+
+            using var testStream = new MemoryStream(ms.ToArray());
+            using var reader = new Nedev.FileConverters.DocxToDoc.Format.DocxReader(testStream);
+
+            var model = reader.ReadDocument();
+
+            Assert.Collection(
+                model.Content,
+                block => Assert.Equal("Before", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))),
+                block =>
+                {
+                    var table = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(block);
+                    var cell = table.Rows[0].Cells[0];
+                    Assert.Collection(
+                        cell.Content,
+                        cellBlock => Assert.Equal("Cell lead", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(cellBlock).Runs.Select(run => run.Text))),
+                        cellBlock => Assert.Equal("Inner lead", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(cellBlock).Runs.Select(run => run.Text))),
+                        cellBlock =>
+                        {
+                            var nestedTable = Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.TableModel>(cellBlock);
+                            Assert.Equal("Cell", nestedTable.Rows[0].Cells[0].Paragraphs[0].Runs[0].Text);
+                        },
+                        cellBlock => Assert.Equal("Inner tail", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(cellBlock).Runs.Select(run => run.Text))),
+                        cellBlock => Assert.Equal("Cell tail", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(cellBlock).Runs.Select(run => run.Text))));
+                    Assert.Equal(
+                        new[] { "Cell lead", "Inner lead", "Cell", "Inner tail", "Cell tail" },
+                        cell.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+                },
+                block => Assert.Equal("After", string.Concat(Assert.IsType<Nedev.FileConverters.DocxToDoc.Model.ParagraphModel>(block).Runs.Select(run => run.Text))));
+
+            Assert.Equal(
+                new[] { "Before", "After" },
+                model.Paragraphs.Select(paragraph => string.Concat(paragraph.Runs.Select(run => run.Text))).ToArray());
+            Assert.Equal("Before\rCell lead\rInner lead\rCell\rInner tail\rCell tail\rAfter\r", model.TextBuffer);
+        }
+
+        [Fact]
         public void ReadDocument_WithSpecialHyphenCharacters_PreservesRunAndHyperlinkText()
         {
             using var ms = new MemoryStream();
@@ -197,6 +1103,46 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.Equal("re\u2011enter\u00ADing", hyperlinkRun.Hyperlink!.DisplayText);
             Assert.Equal("https://example.com/hyphen", hyperlinkRun.Hyperlink.TargetUrl);
             Assert.Equal("co\u2011op\u00ADerate re\u2011enter\u00ADing\r", model.TextBuffer);
+        }
+
+        private static byte[] CreateEmbeddedDocxChunk(bool includeTable)
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("word/document.xml");
+                using (var entryStream = entry.Open())
+                using (var writer = new StreamWriter(entryStream))
+                {
+                    writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+                                 "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>" +
+                                 "<w:p><w:r><w:t>Inner lead</w:t></w:r></w:p>");
+
+                    if (includeTable)
+                    {
+                        writer.Write("<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>");
+                    }
+
+                    writer.Write("<w:p><w:r><w:t>Inner tail</w:t></w:r></w:p>" +
+                                 "</w:body></w:document>");
+                }
+            }
+
+            return ms.ToArray();
+        }
+
+        private static byte[] CreateEmbeddedDocxChunkWithoutDocumentXml()
+        {
+            using var ms = new MemoryStream();
+            using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+            {
+                var entry = archive.CreateEntry("[Content_Types].xml");
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream);
+                writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>");
+            }
+
+            return ms.ToArray();
         }
 
         [Fact]
