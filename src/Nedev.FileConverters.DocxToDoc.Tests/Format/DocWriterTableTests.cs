@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
+using System.Reflection;
 using Nedev.FileConverters.DocxToDoc.Format;
 using Nedev.FileConverters.DocxToDoc.Model;
 using Xunit;
@@ -130,6 +131,187 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int lcbPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8) + 4);
             Assert.True(lcbPlcfbteTapx > 0);
             Assert.True(GetTapxRunCount(wordDocData, tableStream.GetData()) >= 3);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTableRowHeaderAndCantSplit_WritesRowFlagSprmsIntoTapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var table = new TableModel();
+            var row = new TableRowModel
+            {
+                IsHeader = true,
+                CannotSplit = true
+            };
+
+            var cell = new TableCellModel { Width = 5000 };
+            cell.Paragraphs.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Cell" }
+                }
+            });
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+            model.Content.Add(table);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            byte[] tapxPage = GetTapxPageData(wordDocStream.GetData(), tableStream.GetData());
+
+            Assert.True(ContainsSubsequence(tapxPage, new byte[] { 0x03, 0x34, 0x01 }));
+            Assert.True(ContainsSubsequence(tapxPage, new byte[] { 0x04, 0x34, 0x01 }));
+        }
+
+        [Fact]
+        public void ScaleWidthsToTarget_WhenLastCellCannotAbsorbDelta_RebalancesAcrossSelectedWidths()
+        {
+            var widths = new List<int> { 100, 100, 1 };
+            var method = typeof(DocWriter).GetMethod("ScaleWidthsToTarget", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            method!.Invoke(null, new object[] { widths, 10 });
+
+            Assert.Equal(10, widths[0] + widths[1] + widths[2]);
+            Assert.True(widths[0] >= 1);
+            Assert.True(widths[1] >= 1);
+            Assert.True(widths[2] >= 1);
+        }
+
+        [Fact]
+        public void ScaleSelectedWidthsToTarget_WhenLastSelectedCannotAbsorbDelta_RebalancesAcrossSelectedWidths()
+        {
+            var widths = new List<int> { 100, 100, 1, 50 };
+            var selected = new List<bool> { true, true, true, false };
+            var method = typeof(DocWriter).GetMethod("ScaleSelectedWidthsToTarget", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            method!.Invoke(null, new object[] { widths, selected, 10 });
+
+            Assert.Equal(10, widths[0] + widths[1] + widths[2]);
+            Assert.True(widths[0] >= 1);
+            Assert.True(widths[1] >= 1);
+            Assert.True(widths[2] >= 1);
+            Assert.Equal(50, widths[3]);
+        }
+
+        [Fact]
+        public void ScaleWidthsToTarget_WithVeryLargeWidths_DoesNotOverflowAndReachesTarget()
+        {
+            var widths = new List<int> { int.MaxValue, int.MaxValue, int.MaxValue };
+            var method = typeof(DocWriter).GetMethod("ScaleWidthsToTarget", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            method!.Invoke(null, new object[] { widths, 1000 });
+
+            Assert.Equal(1000, widths[0] + widths[1] + widths[2]);
+            Assert.True(widths[0] >= 1);
+            Assert.True(widths[1] >= 1);
+            Assert.True(widths[2] >= 1);
+        }
+
+        [Fact]
+        public void ScaleSelectedWidthsToTarget_WithVeryLargeSelectedWidths_DoesNotOverflowAndReachesTarget()
+        {
+            var widths = new List<int> { int.MaxValue, int.MaxValue, int.MaxValue, 50 };
+            var selected = new List<bool> { true, true, true, false };
+            var method = typeof(DocWriter).GetMethod("ScaleSelectedWidthsToTarget", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            method!.Invoke(null, new object[] { widths, selected, 1000 });
+
+            Assert.Equal(1000, widths[0] + widths[1] + widths[2]);
+            Assert.True(widths[0] >= 1);
+            Assert.True(widths[1] >= 1);
+            Assert.True(widths[2] >= 1);
+            Assert.Equal(50, widths[3]);
+        }
+
+        [Fact]
+        public void ResolveTableCellWidth_WithVeryLargeGridWidths_ClampsToIntMax()
+        {
+            var table = new TableModel();
+            table.GridColumnWidths.Add(int.MaxValue);
+            table.GridColumnWidths.Add(int.MaxValue);
+
+            var method = typeof(DocWriter).GetMethod("ResolveTableCellWidth", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            int width = (int)method!.Invoke(null, new object[] { table, 0, 2, 0 })!;
+            Assert.Equal(int.MaxValue, width);
+        }
+
+        [Fact]
+        public void ResolveBaseTableWidthTwips_WithVeryLargeGridAndCellWidths_ClampsToIntMax()
+        {
+            var table = new TableModel();
+            table.GridColumnWidths.Add(int.MaxValue);
+            table.GridColumnWidths.Add(int.MaxValue);
+
+            var row = new TableRowModel();
+            row.Cells.Add(new TableCellModel { Width = int.MaxValue, WidthUnit = TableWidthUnit.Dxa });
+            row.Cells.Add(new TableCellModel { Width = int.MaxValue, WidthUnit = TableWidthUnit.Dxa });
+
+            var method = typeof(DocWriter).GetMethod("ResolveBaseTableWidthTwips", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            int widthFromGrid = (int)method!.Invoke(null, new object[] { table, row, 2, 1000 })!;
+            Assert.Equal(int.MaxValue, widthFromGrid);
+
+            table.GridColumnWidths.Clear();
+            int widthFromCells = (int)method.Invoke(null, new object[] { table, row, 2, 1000 })!;
+            Assert.Equal(int.MaxValue, widthFromCells);
+        }
+
+        [Fact]
+        public void ScaleExplicitWidthsToTarget_WithVeryLargeWidths_DoesNotOverflow()
+        {
+            var widths = new List<int> { int.MaxValue, int.MaxValue, int.MaxValue };
+            var explicitFlags = new List<bool> { true, true, false };
+            var units = new List<TableWidthUnit> { TableWidthUnit.Dxa, TableWidthUnit.Pct, TableWidthUnit.Auto };
+
+            var method = typeof(DocWriter).GetMethod("ScaleExplicitWidthsToTarget", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            bool scaled = (bool)method!.Invoke(null, new object[] { widths, explicitFlags, units, 1000 })!;
+            Assert.True(scaled);
+            Assert.True(widths[0] >= 1);
+            Assert.True(widths[1] >= 1);
+            Assert.True(widths[2] >= 1);
+        }
+
+        [Fact]
+        public void ResolveRowCellWidthsTwips_WithVeryLargeGridAndSmallTarget_ConvergesToTarget()
+        {
+            var table = new TableModel();
+            table.GridColumnWidths.Add(int.MaxValue);
+            table.GridColumnWidths.Add(int.MaxValue);
+            table.GridColumnWidths.Add(int.MaxValue);
+
+            var row = new TableRowModel();
+            row.Cells.Add(new TableCellModel { Width = 0, WidthUnit = TableWidthUnit.Auto });
+            row.Cells.Add(new TableCellModel { Width = 0, WidthUnit = TableWidthUnit.Auto });
+            row.Cells.Add(new TableCellModel { Width = 0, WidthUnit = TableWidthUnit.Auto });
+
+            var method = typeof(DocWriter).GetMethod("ResolveRowCellWidthsTwips", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            var widths = (List<int>)method!.Invoke(null, new object[] { table, row, 1000, 3 })!;
+            Assert.Equal(3, widths.Count);
+            Assert.Equal(1000, widths[0] + widths[1] + widths[2]);
+            Assert.True(widths[0] >= 1);
+            Assert.True(widths[1] >= 1);
+            Assert.True(widths[2] >= 1);
         }
 
         private bool IsWord97Format(byte[] data)
@@ -496,6 +678,82 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int lineRelativeTop = GetBodyFloatingImageTopWithVerticalRelativeTo(pngBytes, "line");
 
             Assert.True(lineRelativeTop < paragraphRelativeTop);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_FloatingImageHorizontalRelativeToMarginSides_UsesDistinctAnchors()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int leftMarginAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "leftMargin", "topMargin", 0, 0).left;
+            int rightMarginAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "rightMargin", "topMargin", 0, 0).left;
+
+            Assert.Equal(1440, leftMarginAnchor);
+            Assert.Equal(10466, rightMarginAnchor);
+            Assert.Equal(9026, rightMarginAnchor - leftMarginAnchor);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_FloatingImageVerticalRelativeToMarginSides_UsesDistinctAnchors()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int topMarginAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "leftMargin", "topMargin", 0, 0).top;
+            int bottomMarginAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "leftMargin", "bottomMargin", 0, 0).top;
+
+            Assert.Equal(1440, topMarginAnchor);
+            Assert.Equal(15398, bottomMarginAnchor);
+            Assert.Equal(13958, bottomMarginAnchor - topMarginAnchor);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_FloatingImageHorizontalRelativeToInsideOutsideMargin_UsesDistinctAnchors()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int insideMarginAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "insideMargin", "topMargin", 0, 0).left;
+            int outsideMarginAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "outsideMargin", "topMargin", 0, 0).left;
+
+            Assert.Equal(1440, insideMarginAnchor);
+            Assert.Equal(10466, outsideMarginAnchor);
+            Assert.Equal(9026, outsideMarginAnchor - insideMarginAnchor);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_FloatingImageHorizontalRelativeToInsideOutside_Alias_UsesDistinctAnchors()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            byte[] pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+            };
+
+            int insideAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "inside", "topMargin", 0, 0).left;
+            int outsideAnchor = GetBodyFloatingImagePositionWithRelativeTo(pngBytes, "outside", "topMargin", 0, 0).left;
+
+            Assert.Equal(1440, insideAnchor);
+            Assert.Equal(10466, outsideAnchor);
+            Assert.Equal(9026, outsideAnchor - insideAnchor);
         }
 
         [Fact]
@@ -1452,6 +1710,56 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int right = BitConverter.ToInt32(tableData, recordOffset + 12);
             int bottom = BitConverter.ToInt32(tableData, recordOffset + 16);
             return (left, top, right, bottom);
+        }
+
+        private static (int left, int top) GetBodyFloatingImagePositionWithRelativeTo(
+            byte[] pngBytes,
+            string horizontalRelativeTo,
+            string verticalRelativeTo,
+            int positionXTwips,
+            int positionYTwips)
+        {
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = pngBytes,
+                            ContentType = "image/png",
+                            Width = 96,
+                            Height = 48,
+                            LayoutType = ImageLayoutType.Floating,
+                            HorizontalRelativeTo = horizontalRelativeTo,
+                            VerticalRelativeTo = verticalRelativeTo,
+                            PositionXTwips = positionXTwips,
+                            PositionYTwips = positionYTwips
+                        }
+                    }
+                }
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fcPlcfspaMom = BitConverter.ToInt32(wordDocData, 154 + (40 * 8));
+            int recordOffset = fcPlcfspaMom + 8;
+
+            int left = BitConverter.ToInt32(tableData, recordOffset + 4);
+            int top = BitConverter.ToInt32(tableData, recordOffset + 8);
+            return (left, top);
         }
 
         private static int GetBodyFloatingImageTopWithVerticalRelativeTo(byte[] pngBytes, string verticalRelativeTo)
@@ -3174,6 +3482,44 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int pnTapx = BitConverter.ToInt32(tableData, fcPlcfbteTapx + 8);
             int tapxPageOffset = pnTapx * 512;
             return wordDocData[tapxPageOffset + 511];
+        }
+
+        private static byte[] GetTapxPageData(byte[] wordDocData, byte[] tableData)
+        {
+            int fcPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8));
+            int pnTapx = BitConverter.ToInt32(tableData, fcPlcfbteTapx + 8);
+            int tapxPageOffset = pnTapx * 512;
+            var buffer = new byte[511];
+            Array.Copy(wordDocData, tapxPageOffset, buffer, 0, 511);
+            return buffer;
+        }
+
+        private static bool ContainsSubsequence(byte[] buffer, byte[] subsequence)
+        {
+            if (subsequence.Length == 0 || buffer.Length < subsequence.Length)
+            {
+                return false;
+            }
+
+            for (int index = 0; index <= buffer.Length - subsequence.Length; index++)
+            {
+                bool match = true;
+                for (int innerIndex = 0; innerIndex < subsequence.Length; innerIndex++)
+                {
+                    if (buffer[index + innerIndex] != subsequence[innerIndex])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static int GetAlignedCellImageTopWithRowHeight(int rowHeightTwips, TableRowHeightRule heightRule, TableCellVerticalAlignment alignment, byte[] pngBytes)

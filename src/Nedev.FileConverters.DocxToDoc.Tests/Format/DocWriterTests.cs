@@ -2136,6 +2136,76 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImageVeryLargeDistance_KeepsBoundsOrdered()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var bounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                distanceLeftTwips: 1_500_000_000,
+                distanceTopTwips: 1_500_000_000,
+                distanceRightTwips: 1_500_000_000,
+                distanceBottomTwips: 1_500_000_000));
+
+            Assert.True(bounds.left <= bounds.right);
+            Assert.True(bounds.top <= bounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithPageRelativeFloatingImageVeryLargePixelDimensions_KeepsBoundsOrdered()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Sections.Add(new SectionModel
+            {
+                PageWidth = 10000,
+                PageHeight = 15000,
+                MarginLeft = 1000,
+                MarginRight = 1000,
+                MarginTop = 1200,
+                MarginBottom = 1800
+            });
+
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel
+                    {
+                        Text = "Anchor paragraph"
+                    },
+                    new RunModel
+                    {
+                        Image = new ImageModel
+                        {
+                            Data = new byte[]
+                            {
+                                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
+                            },
+                            ContentType = "image/png",
+                            Width = int.MaxValue,
+                            Height = int.MaxValue,
+                            LayoutType = ImageLayoutType.Floating,
+                            HorizontalRelativeTo = "page",
+                            VerticalRelativeTo = "page",
+                            PositionXTwips = 0,
+                            PositionYTwips = 0
+                        }
+                    }
+                }
+            });
+
+            var bounds = GetFirstFloatingImageBounds(model);
+
+            Assert.True(bounds.left <= bounds.right);
+            Assert.True(bounds.top <= bounds.bottom);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithLineRelativeFloatingImageAndDistance_ExpandsBoundsByDistance()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -2149,6 +2219,136 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                 distanceTopTwips: 240,
                 distanceRightTwips: 360,
                 distanceBottomTwips: 480));
+
+            Assert.Equal(baseBounds.left - 120, expandedBounds.left);
+            Assert.Equal(baseBounds.top - 240, expandedBounds.top);
+            Assert.Equal(baseBounds.right + 360, expandedBounds.right);
+            Assert.Equal(baseBounds.bottom + 480, expandedBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTopAndBottomWrappedFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                wrapType: ImageWrapType.TopAndBottom));
+            var expandedBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                distanceLeftTwips: 120,
+                distanceTopTwips: 240,
+                distanceRightTwips: 360,
+                distanceBottomTwips: 480,
+                wrapType: ImageWrapType.TopAndBottom));
+
+            Assert.Equal(baseBounds.left, expandedBounds.left);
+            Assert.Equal(baseBounds.right, expandedBounds.right);
+            Assert.Equal(baseBounds.top - 240, expandedBounds.top);
+            Assert.Equal(baseBounds.bottom + 480, expandedBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithLineRelativeTopAndBottomWrappedFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: true,
+                verticalRelativeTo: "line",
+                verticalAlignment: null,
+                wrapType: ImageWrapType.TopAndBottom));
+            var expandedBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: true,
+                verticalRelativeTo: "line",
+                verticalAlignment: null,
+                distanceLeftTwips: 120,
+                distanceTopTwips: 240,
+                distanceRightTwips: 360,
+                distanceBottomTwips: 480,
+                wrapType: ImageWrapType.TopAndBottom));
+
+            Assert.Equal(baseBounds.left, expandedBounds.left);
+            Assert.Equal(baseBounds.right, expandedBounds.right);
+            Assert.Equal(baseBounds.top - 240, expandedBounds.top);
+            Assert.Equal(baseBounds.bottom + 480, expandedBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithParagraphRelativeTopAndBottomWrappedFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: true,
+                verticalRelativeTo: "paragraph",
+                verticalAlignment: null,
+                wrapType: ImageWrapType.TopAndBottom));
+            var expandedBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: true,
+                verticalRelativeTo: "paragraph",
+                verticalAlignment: null,
+                distanceLeftTwips: 120,
+                distanceTopTwips: 240,
+                distanceRightTwips: 360,
+                distanceBottomTwips: 480,
+                wrapType: ImageWrapType.TopAndBottom));
+
+            Assert.Equal(baseBounds.left, expandedBounds.left);
+            Assert.Equal(baseBounds.right, expandedBounds.right);
+            Assert.Equal(baseBounds.top - 240, expandedBounds.top);
+            Assert.Equal(baseBounds.bottom + 480, expandedBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithTightWrappedFloatingImage_DistanceExpandsBothAxes()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                wrapType: ImageWrapType.Tight));
+            var expandedBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                distanceLeftTwips: 120,
+                distanceTopTwips: 240,
+                distanceRightTwips: 360,
+                distanceBottomTwips: 480,
+                wrapType: ImageWrapType.Tight));
+
+            Assert.Equal(baseBounds.left - 120, expandedBounds.left);
+            Assert.Equal(baseBounds.top - 240, expandedBounds.top);
+            Assert.Equal(baseBounds.right + 360, expandedBounds.right);
+            Assert.Equal(baseBounds.bottom + 480, expandedBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithThroughWrappedFloatingImage_DistanceExpandsBothAxes()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var baseBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                wrapType: ImageWrapType.Through));
+            var expandedBounds = GetFirstFloatingImageBounds(BuildAnchorStabilityModel(
+                addTallLeadParagraph: false,
+                verticalRelativeTo: "page",
+                verticalAlignment: null,
+                distanceLeftTwips: 120,
+                distanceTopTwips: 240,
+                distanceRightTwips: 360,
+                distanceBottomTwips: 480,
+                wrapType: ImageWrapType.Through));
 
             Assert.Equal(baseBounds.left - 120, expandedBounds.left);
             Assert.Equal(baseBounds.top - 240, expandedBounds.top);
@@ -2382,6 +2582,64 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int secondFlags = GetFloatingImageFlagsByIndex(dualImageModel, shapeCount: 2, shapeIndex: 1);
 
             Assert.NotEqual(firstFlags, secondFlags);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithWrapNoneFloatingImage_IgnoresWrapDistanceExpansion()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var withoutDistanceModel = BuildMultipleFloatingImagesModel(
+                includeSecondImage: true,
+                secondImageDistanceTopTwips: 0,
+                secondImageWrapType: ImageWrapType.None,
+                secondImageBehindText: false,
+                secondImageAllowOverlap: true,
+                secondImageHorizontalRelativeTo: "margin",
+                secondImageVerticalRelativeTo: "paragraph");
+            var withDistanceModel = BuildMultipleFloatingImagesModel(
+                includeSecondImage: true,
+                secondImageDistanceTopTwips: 480,
+                secondImageWrapType: ImageWrapType.None,
+                secondImageBehindText: false,
+                secondImageAllowOverlap: true,
+                secondImageHorizontalRelativeTo: "margin",
+                secondImageVerticalRelativeTo: "paragraph");
+
+            var withoutDistanceBounds = GetFloatingImageBoundsByIndex(withoutDistanceModel, shapeCount: 2, shapeIndex: 1);
+            var withDistanceBounds = GetFloatingImageBoundsByIndex(withDistanceModel, shapeCount: 2, shapeIndex: 1);
+
+            Assert.Equal(withoutDistanceBounds.top, withDistanceBounds.top);
+            Assert.Equal(withoutDistanceBounds.bottom, withDistanceBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithBehindTextFloatingImage_IgnoresWrapDistanceExpansion()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var withoutDistanceModel = BuildMultipleFloatingImagesModel(
+                includeSecondImage: true,
+                secondImageDistanceTopTwips: 0,
+                secondImageWrapType: ImageWrapType.Square,
+                secondImageBehindText: true,
+                secondImageAllowOverlap: true,
+                secondImageHorizontalRelativeTo: "margin",
+                secondImageVerticalRelativeTo: "paragraph");
+            var withDistanceModel = BuildMultipleFloatingImagesModel(
+                includeSecondImage: true,
+                secondImageDistanceTopTwips: 480,
+                secondImageWrapType: ImageWrapType.Square,
+                secondImageBehindText: true,
+                secondImageAllowOverlap: true,
+                secondImageHorizontalRelativeTo: "margin",
+                secondImageVerticalRelativeTo: "paragraph");
+
+            var withoutDistanceBounds = GetFloatingImageBoundsByIndex(withoutDistanceModel, shapeCount: 2, shapeIndex: 1);
+            var withDistanceBounds = GetFloatingImageBoundsByIndex(withDistanceModel, shapeCount: 2, shapeIndex: 1);
+
+            Assert.Equal(withoutDistanceBounds.top, withDistanceBounds.top);
+            Assert.Equal(withoutDistanceBounds.bottom, withDistanceBounds.bottom);
         }
 
         [Fact]
@@ -3917,7 +4175,9 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int distanceLeftTwips = 0,
             int distanceTopTwips = 0,
             int distanceRightTwips = 0,
-            int distanceBottomTwips = 0)
+            int distanceBottomTwips = 0,
+            ImageWrapType wrapType = ImageWrapType.Square,
+            bool behindText = false)
         {
             var model = new DocumentModel();
             model.Sections.Add(new SectionModel
@@ -3966,6 +4226,8 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                             Width = 96,
                             Height = 48,
                             LayoutType = ImageLayoutType.Floating,
+                            WrapType = wrapType,
+                            BehindText = behindText,
                             HorizontalRelativeTo = horizontalRelativeTo,
                             VerticalRelativeTo = verticalRelativeTo,
                             VerticalAlignment = verticalAlignment,

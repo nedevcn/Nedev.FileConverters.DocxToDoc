@@ -1844,6 +1844,72 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithHeaderTableRowHeaderAndCantSplit_WritesRowFlagSprmsIntoTapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                DefaultHeaderStory = CreateStructuredHeaderTableWithRowFlagsStory()
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            byte[] tapxPage = GetTapxPageData(wordDocStream.GetData(), tableStream.GetData());
+            Assert.True(ContainsSubsequence(tapxPage, new byte[] { 0x03, 0x34, 0x01 }));
+            Assert.True(ContainsSubsequence(tapxPage, new byte[] { 0x04, 0x34, 0x01 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterTableRowHeaderAndCantSplit_WritesRowFlagSprmsIntoTapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                DefaultFooterStory = CreateStructuredHeaderTableWithRowFlagsStory()
+            });
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            byte[] tapxPage = GetTapxPageData(wordDocStream.GetData(), tableStream.GetData());
+            Assert.True(ContainsSubsequence(tapxPage, new byte[] { 0x03, 0x34, 0x01 }));
+            Assert.True(ContainsSubsequence(tapxPage, new byte[] { 0x04, 0x34, 0x01 }));
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithHeaderTableRowAtLeastHeight_ShiftsFollowingFloatingImageDown()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1990,6 +2056,104 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_WithHeaderFloatingImageNegativeDistance_DoesNotShrinkBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) baseBounds = GetHeaderFloatingImageBoundsWithDistance(0, 0, 0, 0);
+            (int left, int top, int right, int bottom) negativeBounds = GetHeaderFloatingImageBoundsWithDistance(-120, -240, -360, -480);
+
+            Assert.Equal(baseBounds.left, negativeBounds.left);
+            Assert.Equal(baseBounds.top, negativeBounds.top);
+            Assert.Equal(baseBounds.right, negativeBounds.right);
+            Assert.Equal(baseBounds.bottom, negativeBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderFloatingImageVeryLargeDistance_KeepsBoundsOrdered()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) bounds = GetHeaderFloatingImageBoundsWithDistance(1_500_000_000, 1_500_000_000, 1_500_000_000, 1_500_000_000);
+
+            Assert.True(bounds.left <= bounds.right);
+            Assert.True(bounds.top <= bounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderFloatingImageVeryLargePixelDimensions_KeepsBoundsOrdered()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) bounds = GetHeaderFloatingImageBoundsWithDistance(
+                0,
+                0,
+                0,
+                0,
+                imageWidthPixels: int.MaxValue,
+                imageHeightPixels: int.MaxValue);
+
+            Assert.True(bounds.left <= bounds.right);
+            Assert.True(bounds.top <= bounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderLineRelativeTopAndBottomFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetHeaderFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.TopAndBottom, "line");
+            (int left, int top, int right, int bottom) withDistance = GetHeaderFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.TopAndBottom, "line");
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top - 240, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom + 480, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderParagraphRelativeTopAndBottomFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetHeaderFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.TopAndBottom, "paragraph");
+            (int left, int top, int right, int bottom) withDistance = GetHeaderFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.TopAndBottom, "paragraph");
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top - 240, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom + 480, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderWrapNoneFloatingImage_DistanceDoesNotExpandBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetHeaderFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.None, "paragraph");
+            (int left, int top, int right, int bottom) withDistance = GetHeaderFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.None, "paragraph");
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithHeaderBehindTextFloatingImage_DistanceDoesNotExpandBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetHeaderFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.Square, "paragraph", behindText: true);
+            (int left, int top, int right, int bottom) withDistance = GetHeaderFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.Square, "paragraph", behindText: true);
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom, withDistance.bottom);
+        }
+
+        [Fact]
         public void WriteDocBlocks_WithHeaderFloatingImageVerticalRelativeToLine_UsesSmallerAnchorThanParagraph()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -1998,6 +2162,202 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int lineRelativeTop = GetHeaderFloatingImageTopWithVerticalRelativeTo("line");
 
             Assert.True(lineRelativeTop < paragraphRelativeTop);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenHeaderInsideAlignment_FlipsInsideDirectionByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesHeaderStory = CreateHeaderAlignedFloatingImageStory("EvenHeader", "inside"),
+                DefaultHeaderStory = CreateHeaderAlignedFloatingImageStory("OddHeader", "inside")
+            });
+
+            (int evenHeaderLeft, int oddHeaderLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(9026, evenHeaderLeft);
+            Assert.Equal(1440, oddHeaderLeft);
+            Assert.True(evenHeaderLeft > oddHeaderLeft);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenHeaderOutsideAlignment_FlipsOutsideDirectionByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesHeaderStory = CreateHeaderAlignedFloatingImageStory("EvenHeader", "outside"),
+                DefaultHeaderStory = CreateHeaderAlignedFloatingImageStory("OddHeader", "outside")
+            });
+
+            (int evenHeaderLeft, int oddHeaderLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(1440, evenHeaderLeft);
+            Assert.Equal(9026, oddHeaderLeft);
+            Assert.True(oddHeaderLeft > evenHeaderLeft);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenFooterOutsideAlignment_FlipsOutsideDirectionByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesFooterStory = CreateHeaderAlignedFloatingImageStory("EvenFooter", "outside"),
+                DefaultFooterStory = CreateHeaderAlignedFloatingImageStory("OddFooter", "outside")
+            });
+
+            (int evenFooterLeft, int oddFooterLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(1440, evenFooterLeft);
+            Assert.Equal(9026, oddFooterLeft);
+            Assert.True(oddFooterLeft > evenFooterLeft);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenHeaderInsideMarginRelativeTo_FlipsSideByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesHeaderStory = CreateHeaderRelativeFloatingImageStory("EvenHeader", "insideMargin"),
+                DefaultHeaderStory = CreateHeaderRelativeFloatingImageStory("OddHeader", "insideMargin")
+            });
+
+            (int evenHeaderLeft, int oddHeaderLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(10466, evenHeaderLeft);
+            Assert.Equal(1440, oddHeaderLeft);
+            Assert.True(evenHeaderLeft > oddHeaderLeft);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenHeaderOutsideMarginRelativeTo_FlipsSideByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesHeaderStory = CreateHeaderRelativeFloatingImageStory("EvenHeader", "outsideMargin"),
+                DefaultHeaderStory = CreateHeaderRelativeFloatingImageStory("OddHeader", "outsideMargin")
+            });
+
+            (int evenHeaderLeft, int oddHeaderLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(1440, evenHeaderLeft);
+            Assert.Equal(10466, oddHeaderLeft);
+            Assert.True(oddHeaderLeft > evenHeaderLeft);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenFooterInsideMarginRelativeTo_FlipsSideByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesFooterStory = CreateHeaderRelativeFloatingImageStory("EvenFooter", "insideMargin"),
+                DefaultFooterStory = CreateHeaderRelativeFloatingImageStory("OddFooter", "insideMargin")
+            });
+
+            (int evenFooterLeft, int oddFooterLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(10466, evenFooterLeft);
+            Assert.Equal(1440, oddFooterLeft);
+            Assert.True(evenFooterLeft > oddFooterLeft);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithDifferentOddEvenFooterOutsideMarginRelativeTo_FlipsSideByStoryParity()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.DifferentOddAndEvenPages = true;
+            model.Content.Add(new ParagraphModel
+            {
+                Runs =
+                {
+                    new RunModel { Text = "Body" }
+                }
+            });
+
+            model.Sections.Add(new SectionModel
+            {
+                EvenPagesFooterStory = CreateHeaderRelativeFloatingImageStory("EvenFooter", "outsideMargin"),
+                DefaultFooterStory = CreateHeaderRelativeFloatingImageStory("OddFooter", "outsideMargin")
+            });
+
+            (int evenFooterLeft, int oddFooterLeft) = GetFirstTwoHeaderStoryShapeLeftPositions(model);
+
+            Assert.Equal(1440, evenFooterLeft);
+            Assert.Equal(10466, oddFooterLeft);
+            Assert.True(oddFooterLeft > evenFooterLeft);
         }
 
         [Fact]
@@ -2012,6 +2372,104 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.Equal(withoutDistance.top - 240, withDistance.top);
             Assert.Equal(withoutDistance.right + 360, withDistance.right);
             Assert.Equal(withoutDistance.bottom + 480, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterFloatingImageNegativeDistance_DoesNotShrinkBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) baseBounds = GetFooterFloatingImageBoundsWithDistance(0, 0, 0, 0);
+            (int left, int top, int right, int bottom) negativeBounds = GetFooterFloatingImageBoundsWithDistance(-120, -240, -360, -480);
+
+            Assert.Equal(baseBounds.left, negativeBounds.left);
+            Assert.Equal(baseBounds.top, negativeBounds.top);
+            Assert.Equal(baseBounds.right, negativeBounds.right);
+            Assert.Equal(baseBounds.bottom, negativeBounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterFloatingImageVeryLargeDistance_KeepsBoundsOrdered()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) bounds = GetFooterFloatingImageBoundsWithDistance(1_500_000_000, 1_500_000_000, 1_500_000_000, 1_500_000_000);
+
+            Assert.True(bounds.left <= bounds.right);
+            Assert.True(bounds.top <= bounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterFloatingImageVeryLargePixelDimensions_KeepsBoundsOrdered()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) bounds = GetFooterFloatingImageBoundsWithDistance(
+                0,
+                0,
+                0,
+                0,
+                imageWidthPixels: int.MaxValue,
+                imageHeightPixels: int.MaxValue);
+
+            Assert.True(bounds.left <= bounds.right);
+            Assert.True(bounds.top <= bounds.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterLineRelativeTopAndBottomFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetFooterFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.TopAndBottom, "line");
+            (int left, int top, int right, int bottom) withDistance = GetFooterFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.TopAndBottom, "line");
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top - 240, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom + 480, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterParagraphRelativeTopAndBottomFloatingImage_DistanceExpandsOnlyVerticalBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetFooterFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.TopAndBottom, "paragraph");
+            (int left, int top, int right, int bottom) withDistance = GetFooterFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.TopAndBottom, "paragraph");
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top - 240, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom + 480, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterWrapNoneFloatingImage_DistanceDoesNotExpandBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetFooterFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.None, "paragraph");
+            (int left, int top, int right, int bottom) withDistance = GetFooterFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.None, "paragraph");
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom, withDistance.bottom);
+        }
+
+        [Fact]
+        public void WriteDocBlocks_WithFooterBehindTextFloatingImage_DistanceDoesNotExpandBounds()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            (int left, int top, int right, int bottom) withoutDistance = GetFooterFloatingImageBoundsWithDistance(0, 0, 0, 0, ImageWrapType.Square, "paragraph", behindText: true);
+            (int left, int top, int right, int bottom) withDistance = GetFooterFloatingImageBoundsWithDistance(120, 240, 360, 480, ImageWrapType.Square, "paragraph", behindText: true);
+
+            Assert.Equal(withoutDistance.left, withDistance.left);
+            Assert.Equal(withoutDistance.top, withDistance.top);
+            Assert.Equal(withoutDistance.right, withDistance.right);
+            Assert.Equal(withoutDistance.bottom, withDistance.bottom);
         }
 
         [Fact]
@@ -2891,6 +3349,86 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             return story;
         }
 
+        private static HeaderFooterStoryModel CreateHeaderAlignedFloatingImageStory(string text, string horizontalAlignment)
+        {
+            var story = new HeaderFooterStoryModel();
+            var paragraph = new ParagraphModel();
+            paragraph.Runs.Add(new RunModel { Text = text });
+            paragraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    HorizontalRelativeTo = "margin",
+                    VerticalRelativeTo = "margin",
+                    HorizontalAlignment = horizontalAlignment,
+                    VerticalAlignment = "top"
+                }
+            });
+            story.Paragraphs.Add(paragraph);
+            story.Text = text;
+            return story;
+        }
+
+        private static HeaderFooterStoryModel CreateHeaderRelativeFloatingImageStory(string text, string horizontalRelativeTo)
+        {
+            var story = new HeaderFooterStoryModel();
+            var paragraph = new ParagraphModel();
+            paragraph.Runs.Add(new RunModel { Text = text });
+            paragraph.Runs.Add(new RunModel
+            {
+                Image = new ImageModel
+                {
+                    Data = GetTestPngBytes(),
+                    ContentType = "image/png",
+                    Width = 96,
+                    Height = 96,
+                    LayoutType = ImageLayoutType.Floating,
+                    WrapType = ImageWrapType.Square,
+                    HorizontalRelativeTo = horizontalRelativeTo,
+                    VerticalRelativeTo = "margin",
+                    PositionXTwips = 0,
+                    PositionYTwips = 0
+                }
+            });
+            story.Paragraphs.Add(paragraph);
+            story.Text = text;
+            return story;
+        }
+
+        private static (int firstLeft, int secondLeft) GetFirstTwoHeaderStoryShapeLeftPositions(DocumentModel model)
+        {
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+            Assert.True(compoundFile.RootStorage.TryGetStream("1Table", out var tableStream));
+
+            var wordDocData = wordDocStream.GetData();
+            var tableData = tableStream.GetData();
+            int fibPairOffset = 154 + (Fib.HeaderShapePairIndex * 8);
+            int fcPlcSpaHdr = BitConverter.ToInt32(wordDocData, fibPairOffset);
+            int lcbPlcSpaHdr = BitConverter.ToInt32(wordDocData, fibPairOffset + 4);
+            Assert.NotEqual(0, fcPlcSpaHdr);
+            Assert.True(lcbPlcSpaHdr >= 64);
+
+            int pictureCount = (lcbPlcSpaHdr - 4) / 30;
+            Assert.True(pictureCount >= 2);
+
+            int dataStart = fcPlcSpaHdr + ((pictureCount + 1) * 4);
+            int firstLeft = BitConverter.ToInt32(tableData, dataStart + 4);
+            int secondLeft = BitConverter.ToInt32(tableData, dataStart + 26 + 4);
+            return (firstLeft, secondLeft);
+        }
+
         private static HeaderFooterStoryModel CreateStructuredHeaderParagraphAndTableStory()
         {
             var story = new HeaderFooterStoryModel();
@@ -2917,6 +3455,29 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             story.Content.Add(table);
             story.Text = "Head\rCell";
+            return story;
+        }
+
+        private static HeaderFooterStoryModel CreateStructuredHeaderTableWithRowFlagsStory()
+        {
+            var story = new HeaderFooterStoryModel();
+            var table = new TableModel();
+            table.GridColumnWidths.Add(2400);
+
+            var row = new TableRowModel
+            {
+                IsHeader = true,
+                CannotSplit = true
+            };
+            var cell = new TableCellModel { Width = 2400 };
+            var cellParagraph = new ParagraphModel();
+            cellParagraph.Runs.Add(new RunModel { Text = "Cell" });
+            cell.Paragraphs.Add(cellParagraph);
+            row.Cells.Add(cell);
+            table.Rows.Add(row);
+
+            story.Content.Add(table);
+            story.Text = "Cell";
             return story;
         }
 
@@ -3295,7 +3856,12 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int distanceLeftTwips,
             int distanceTopTwips,
             int distanceRightTwips,
-            int distanceBottomTwips)
+            int distanceBottomTwips,
+            ImageWrapType wrapType = ImageWrapType.Square,
+            string verticalRelativeTo = "paragraph",
+            bool behindText = false,
+            int imageWidthPixels = 96,
+            int imageHeightPixels = 48)
         {
             var story = new HeaderFooterStoryModel();
             var paragraph = new ParagraphModel();
@@ -3309,11 +3875,13 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                 {
                     Data = GetTestPngBytes(),
                     ContentType = "image/png",
-                    Width = 96,
-                    Height = 48,
+                    Width = imageWidthPixels,
+                    Height = imageHeightPixels,
                     LayoutType = ImageLayoutType.Floating,
+                    WrapType = wrapType,
+                    BehindText = behindText,
                     HorizontalRelativeTo = "margin",
-                    VerticalRelativeTo = "paragraph",
+                    VerticalRelativeTo = verticalRelativeTo,
                     PositionXTwips = 0,
                     PositionYTwips = 0,
                     DistanceLeftTwips = distanceLeftTwips,
@@ -3415,7 +3983,12 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int distanceLeftTwips,
             int distanceTopTwips,
             int distanceRightTwips,
-            int distanceBottomTwips)
+            int distanceBottomTwips,
+            ImageWrapType wrapType = ImageWrapType.Square,
+            string verticalRelativeTo = "paragraph",
+            bool behindText = false,
+            int imageWidthPixels = 96,
+            int imageHeightPixels = 48)
         {
             var story = new HeaderFooterStoryModel();
             var paragraph = new ParagraphModel();
@@ -3429,11 +4002,13 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
                 {
                     Data = GetTestPngBytes(),
                     ContentType = "image/png",
-                    Width = 96,
-                    Height = 48,
+                    Width = imageWidthPixels,
+                    Height = imageHeightPixels,
                     LayoutType = ImageLayoutType.Floating,
+                    WrapType = wrapType,
+                    BehindText = behindText,
                     HorizontalRelativeTo = "margin",
-                    VerticalRelativeTo = "paragraph",
+                    VerticalRelativeTo = verticalRelativeTo,
                     PositionXTwips = 0,
                     PositionYTwips = 0,
                     DistanceLeftTwips = distanceLeftTwips,
@@ -4822,6 +5397,44 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             int pnTapx = BitConverter.ToInt32(tableData, fcPlcfbteTapx + 8);
             int tapxPageOffset = pnTapx * 512;
             return wordDocData[tapxPageOffset + 511];
+        }
+
+        private static byte[] GetTapxPageData(byte[] wordDocData, byte[] tableData)
+        {
+            int fcPlcfbteTapx = BitConverter.ToInt32(wordDocData, 154 + (Fib.TapxPairIndex * 8));
+            int pnTapx = BitConverter.ToInt32(tableData, fcPlcfbteTapx + 8);
+            int tapxPageOffset = pnTapx * 512;
+            var buffer = new byte[511];
+            Array.Copy(wordDocData, tapxPageOffset, buffer, 0, 511);
+            return buffer;
+        }
+
+        private static bool ContainsSubsequence(byte[] buffer, byte[] subsequence)
+        {
+            if (subsequence.Length == 0 || buffer.Length < subsequence.Length)
+            {
+                return false;
+            }
+
+            for (int index = 0; index <= buffer.Length - subsequence.Length; index++)
+            {
+                bool match = true;
+                for (int innerIndex = 0; innerIndex < subsequence.Length; innerIndex++)
+                {
+                    if (buffer[index + innerIndex] != subsequence[innerIndex])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static byte[] GetTestPngBytes()

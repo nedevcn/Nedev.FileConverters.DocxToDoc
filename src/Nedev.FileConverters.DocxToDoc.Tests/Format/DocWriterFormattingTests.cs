@@ -253,6 +253,58 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x44, 0x24, 0x01 }));
         }
 
+        [Fact]
+        public void WriteDocBlocks_ParagraphPageBreakBefore_WritesPageBreakBeforeSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "PageBreakBeforeTest" });
+            para.Properties.PageBreakBefore = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x08, 0x24, 0x01 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunColor_WritesColorSprmIntoChpx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "ColorTest" };
+            run.Properties.Color = "FF0000";
+            run.Properties.ColorSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x42, 0x2A, 0x06 }));
+        }
+
         private static bool ContainsSubsequence(byte[] buffer, byte[] subsequence)
         {
             if (subsequence.Length == 0 || buffer.Length < subsequence.Length)
