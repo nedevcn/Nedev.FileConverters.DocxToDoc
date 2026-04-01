@@ -176,6 +176,38 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_ParagraphIndentSpecifiedZero_WritesZeroIndentSprmsIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "IndentZeroSpecifiedTest" });
+            para.Properties.LeftIndentTwips = 0;
+            para.Properties.LeftIndentSpecified = true;
+            para.Properties.RightIndentTwips = 0;
+            para.Properties.RightIndentSpecified = true;
+            para.Properties.FirstLineIndentTwips = 0;
+            para.Properties.FirstLineIndentSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x0E, 0x84, 0x00, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x0F, 0x84, 0x00, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x84, 0x00, 0x00 }));
+        }
+
+        [Fact]
         public void WriteDocBlocks_ParagraphKeepFlags_WritesKeepSprmsIntoPapx()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -279,6 +311,73 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_ParagraphSpacingSpecifiedZero_WritesZeroSpacingSprmsIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "SpacingZeroSpecifiedTest" });
+            para.Properties.SpacingBeforeTwips = 0;
+            para.Properties.SpacingBeforeSpecified = true;
+            para.Properties.SpacingAfterTwips = 0;
+            para.Properties.SpacingAfterSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x22, 0x26, 0x00, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x23, 0x26, 0x00, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphKeepFlagsSpecifiedFalse_WritesDisableSprmsIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "DisableFlagsTest" });
+            para.Properties.KeepNext = false;
+            para.Properties.KeepNextSpecified = true;
+            para.Properties.KeepLines = false;
+            para.Properties.KeepLinesSpecified = true;
+            para.Properties.WidowControl = false;
+            para.Properties.WidowControlSpecified = true;
+            para.Properties.PageBreakBefore = false;
+            para.Properties.PageBreakBeforeSpecified = true;
+            para.Properties.ContextualSpacing = false;
+            para.Properties.ContextualSpacingSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x05, 0x24, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x06, 0x24, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x07, 0x24, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x08, 0x24, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x44, 0x24, 0x00 }));
+        }
+
+        [Fact]
         public void WriteDocBlocks_RunColor_WritesColorSprmIntoChpx()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -303,6 +402,99 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             byte[] wordDocData = wordDocStream.GetData();
 
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x42, 0x2A, 0x06 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunStyleSpecifiedFalse_WritesDisableSprmsIntoChpx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "DisableRunStyleTest" };
+            run.Properties.IsBold = false;
+            run.Properties.IsBoldSpecified = true;
+            run.Properties.IsItalic = false;
+            run.Properties.IsItalicSpecified = true;
+            run.Properties.IsStrike = false;
+            run.Properties.IsStrikeSpecified = true;
+            run.Properties.Underline = UnderlineType.None;
+            run.Properties.UnderlineSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x35, 0x08, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x36, 0x08, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x37, 0x08, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x3E, 0x2A, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunFontSpecifiedWithUnknownFont_AppendsFontAndWritesFontSprm()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Fonts.Add(new FontModel { Name = "Arial" });
+
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "FontTest" };
+            run.Properties.FontName = "Calibri";
+            run.Properties.FontNameSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x4F, 0x4A, 0x01, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunFontSpecifiedWithoutName_WritesDefaultFontSprm()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            model.Fonts.Add(new FontModel { Name = "Arial" });
+
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "DefaultFontTest" };
+            run.Properties.FontNameSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x4F, 0x4A, 0x00, 0x00 }));
         }
 
         private static bool ContainsSubsequence(byte[] buffer, byte[] subsequence)

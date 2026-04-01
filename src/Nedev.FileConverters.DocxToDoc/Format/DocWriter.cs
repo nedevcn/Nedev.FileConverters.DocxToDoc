@@ -3251,7 +3251,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             return table.PreferredWidthUnit switch
             {
                 TableWidthUnit.Dxa when table.PreferredWidthValue > 0 => Math.Max(720, table.PreferredWidthValue),
-                TableWidthUnit.Pct when table.PreferredWidthValue > 0 => Math.Max(720, (int)Math.Round(documentAvailableWidthTwips * (table.PreferredWidthValue / 5000d), MidpointRounding.AwayFromZero)),
+                TableWidthUnit.Pct when table.PreferredWidthValue > 0 => Math.Max(720, ComputePctWidthTwips(documentAvailableWidthTwips, table.PreferredWidthValue)),
                 _ => 0
             };
         }
@@ -3322,7 +3322,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 spans.Add(span);
                 isExplicitResolvedWidth.Add(resolvedFromExplicitWidth);
                 explicitWidthUnits.Add(resolvedFromExplicitWidth ? cell.WidthUnit : TableWidthUnit.Auto);
-                minimumAutoWidthsTwips.Add(ClampToInt32((long)Math.Max(720, 720 * span) + horizontalOverheadTwips));
+                minimumAutoWidthsTwips.Add(ClampToInt32(Math.Max(720L, 720L * span) + horizontalOverheadTwips));
 
                 if (widthTwips > 0)
                 {
@@ -3715,7 +3715,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             int span = Math.Max(1, gridSpan);
-            int autoWidthTwips = Math.Max(720, (int)Math.Round(tableAvailableWidthTwips * (span / (double)Math.Max(1, totalColumnCount)), MidpointRounding.AwayFromZero));
+            int autoWidthTwips = Math.Max(720, ScaleTwipsByRatio(tableAvailableWidthTwips, span, Math.Max(1, totalColumnCount)));
             return autoWidthTwips;
         }
 
@@ -3728,7 +3728,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             return cell.WidthUnit switch
             {
-                TableWidthUnit.Pct when referenceTableWidthTwips > 0 => Math.Max(1, (int)Math.Round(referenceTableWidthTwips * (cell.Width / 5000d), MidpointRounding.AwayFromZero)),
+                TableWidthUnit.Pct when referenceTableWidthTwips > 0 => Math.Max(1, ComputePctWidthTwips(referenceTableWidthTwips, cell.Width)),
                 TableWidthUnit.Auto => 0,
                 _ => Math.Max(0, cell.Width)
             };
@@ -3746,7 +3746,28 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return cellWidthTwips;
             }
 
-            return Math.Max(720, (int)Math.Round(cellWidthTwips * (targetTableWidthTwips / (double)baseTableWidthTwips), MidpointRounding.AwayFromZero));
+            return Math.Max(720, ScaleTwipsByRatio(cellWidthTwips, targetTableWidthTwips, baseTableWidthTwips));
+        }
+
+        private static int ComputePctWidthTwips(int referenceWidthTwips, int pctValue)
+        {
+            if (referenceWidthTwips <= 0 || pctValue <= 0)
+            {
+                return 0;
+            }
+
+            return ScaleTwipsByRatio(referenceWidthTwips, pctValue, 5000);
+        }
+
+        private static int ScaleTwipsByRatio(int valueTwips, int numerator, int denominator)
+        {
+            if (valueTwips <= 0 || numerator <= 0 || denominator <= 0)
+            {
+                return 0;
+            }
+
+            long scaledValue = (long)Math.Round(valueTwips * (numerator / (double)denominator), MidpointRounding.AwayFromZero);
+            return ClampToInt32(scaledValue);
         }
 
         private static int ResolveTableCellLeftBorderTwips(TableModel table, TableCellModel cell, TableCellModel? previousCell, bool isFirstColumn)
@@ -4786,7 +4807,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static void AppendParagraphIndentSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
         {
-            if (props.RightIndentTwips != 0)
+            if (props.RightIndentTwips != 0 || props.RightIndentSpecified)
             {
                 sprms.Add(0x0E);
                 sprms.Add(0x84);
@@ -4795,7 +4816,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add((byte)((rightIndent >> 8) & 0xFF));
             }
 
-            if (props.LeftIndentTwips != 0)
+            if (props.LeftIndentTwips != 0 || props.LeftIndentSpecified)
             {
                 sprms.Add(0x0F);
                 sprms.Add(0x84);
@@ -4804,7 +4825,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add((byte)((leftIndent >> 8) & 0xFF));
             }
 
-            if (props.FirstLineIndentTwips != 0)
+            if (props.FirstLineIndentTwips != 0 || props.FirstLineIndentSpecified)
             {
                 sprms.Add(0x11);
                 sprms.Add(0x84);
@@ -4816,66 +4837,69 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
         private static void AppendParagraphSpacingSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
         {
-            if (props.SpacingBeforeTwips > 0)
+            if (props.SpacingBeforeTwips > 0 || props.SpacingBeforeSpecified)
             {
                 sprms.Add(0x22);
                 sprms.Add(0x26);
-                sprms.Add((byte)(props.SpacingBeforeTwips & 0xFF));
-                sprms.Add((byte)((props.SpacingBeforeTwips >> 8) & 0xFF));
+                short spacingBefore = ClampToShort(props.SpacingBeforeTwips);
+                sprms.Add((byte)(spacingBefore & 0xFF));
+                sprms.Add((byte)((spacingBefore >> 8) & 0xFF));
             }
 
-            if (props.SpacingAfterTwips > 0)
+            if (props.SpacingAfterTwips > 0 || props.SpacingAfterSpecified)
             {
                 sprms.Add(0x23);
                 sprms.Add(0x26);
-                sprms.Add((byte)(props.SpacingAfterTwips & 0xFF));
-                sprms.Add((byte)((props.SpacingAfterTwips >> 8) & 0xFF));
+                short spacingAfter = ClampToShort(props.SpacingAfterTwips);
+                sprms.Add((byte)(spacingAfter & 0xFF));
+                sprms.Add((byte)((spacingAfter >> 8) & 0xFF));
             }
 
             if (props.LineSpacing.HasValue)
             {
                 sprms.Add(0x24);
                 sprms.Add(0x26);
-                sprms.Add((byte)(props.LineSpacing.Value & 0xFF));
-                sprms.Add((byte)((props.LineSpacing.Value >> 8) & 0xFF));
+                short lineSpacing = ClampToShort(props.LineSpacing.Value);
+                sprms.Add((byte)(lineSpacing & 0xFF));
+                sprms.Add((byte)((lineSpacing >> 8) & 0xFF));
             }
         }
 
         private static void AppendParagraphKeepSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
         {
-            if (props.KeepNext)
+            if (props.KeepNext || props.KeepNextSpecified)
             {
                 sprms.Add(0x05);
                 sprms.Add(0x24);
-                sprms.Add(1);
+                sprms.Add((byte)(props.KeepNext ? 1 : 0));
             }
 
-            if (props.KeepLines)
+            if (props.KeepLines || props.KeepLinesSpecified)
             {
                 sprms.Add(0x06);
                 sprms.Add(0x24);
-                sprms.Add(1);
+                sprms.Add((byte)(props.KeepLines ? 1 : 0));
             }
 
-            if (props.WidowControl)
+            if (props.WidowControl || props.WidowControlSpecified)
             {
                 sprms.Add(0x07);
                 sprms.Add(0x24);
-                sprms.Add(1);
+                sprms.Add((byte)(props.WidowControl ? 1 : 0));
             }
 
-            if (props.PageBreakBefore)
+            if (props.PageBreakBefore || props.PageBreakBeforeSpecified)
             {
                 sprms.Add(0x08);
                 sprms.Add(0x24);
-                sprms.Add(1);
+                sprms.Add((byte)(props.PageBreakBefore ? 1 : 0));
             }
 
-            if (props.ContextualSpacing)
+            if (props.ContextualSpacing || props.ContextualSpacingSpecified)
             {
                 sprms.Add(0x44);
                 sprms.Add(0x24);
-                sprms.Add(1);
+                sprms.Add((byte)(props.ContextualSpacing ? 1 : 0));
             }
         }
 
@@ -4907,9 +4931,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
         {
             var sprms = new List<byte>();
 
-            if (props.IsBold) { sprms.Add(0x35); sprms.Add(0x08); sprms.Add(1); }
-            if (props.IsItalic) { sprms.Add(0x36); sprms.Add(0x08); sprms.Add(1); }
-            if (props.IsStrike) { sprms.Add(0x37); sprms.Add(0x08); sprms.Add(1); }
+            if (props.IsBold || props.IsBoldSpecified) { sprms.Add(0x35); sprms.Add(0x08); sprms.Add((byte)(props.IsBold ? 1 : 0)); }
+            if (props.IsItalic || props.IsItalicSpecified) { sprms.Add(0x36); sprms.Add(0x08); sprms.Add((byte)(props.IsItalic ? 1 : 0)); }
+            if (props.IsStrike || props.IsStrikeSpecified) { sprms.Add(0x37); sprms.Add(0x08); sprms.Add((byte)(props.IsStrike ? 1 : 0)); }
             if (props.FontSize.HasValue)
             {
                 sprms.Add(0x43); sprms.Add(0x4A);
@@ -4917,7 +4941,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add(BitConverter.GetBytes((short)props.FontSize.Value)[1]);
             }
 
-            if (props.Underline != UnderlineType.None)
+            if (props.UnderlineSpecified || props.Underline != UnderlineType.None)
             {
                 sprms.Add(0x3E); sprms.Add(0x2A);
                 sprms.Add(props.Underline switch
@@ -4932,9 +4956,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 });
             }
 
-            if (!string.IsNullOrEmpty(props.FontName))
+            if (props.FontNameSpecified || !string.IsNullOrWhiteSpace(props.FontName))
             {
-                int fontIndex = fonts.FindIndex(f => string.Equals(f.Name, props.FontName, StringComparison.OrdinalIgnoreCase));
+                int fontIndex = ResolveOrAppendFontIndex(fonts, props.FontName);
                 if (fontIndex >= 0)
                 {
                     sprms.Add(0x4F); sprms.Add(0x4A); // sprmCRgFtc0
@@ -4952,6 +4976,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             return sprms.ToArray();
+        }
+
+        private static int ResolveOrAppendFontIndex(List<FontModel> fonts, string? fontName)
+        {
+            if (!string.IsNullOrWhiteSpace(fontName))
+            {
+                int existingIndex = fonts.FindIndex(f => string.Equals(f.Name, fontName, StringComparison.OrdinalIgnoreCase));
+                if (existingIndex >= 0)
+                {
+                    return existingIndex;
+                }
+
+                fonts.Add(new FontModel
+                {
+                    Name = fontName
+                });
+                return fonts.Count - 1;
+            }
+
+            return fonts.Count > 0 ? 0 : -1;
         }
 
         private static byte ResolveColorIndex(string? color)

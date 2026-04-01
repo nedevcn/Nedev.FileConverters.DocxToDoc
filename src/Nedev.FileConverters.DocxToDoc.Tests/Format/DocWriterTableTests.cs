@@ -314,6 +314,26 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(widths[2] >= 1);
         }
 
+        [Fact]
+        public void ComputePctWidthTwips_WithVeryLargeInputs_ClampsToIntMax()
+        {
+            var method = typeof(DocWriter).GetMethod("ComputePctWidthTwips", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            int width = (int)method!.Invoke(null, new object[] { int.MaxValue, int.MaxValue })!;
+            Assert.Equal(int.MaxValue, width);
+        }
+
+        [Fact]
+        public void ScaleTwipsByRatio_WithVeryLargeInputs_ClampsToIntMax()
+        {
+            var method = typeof(DocWriter).GetMethod("ScaleTwipsByRatio", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            int scaled = (int)method!.Invoke(null, new object[] { int.MaxValue, int.MaxValue, 1 })!;
+            Assert.Equal(int.MaxValue, scaled);
+        }
+
         private bool IsWord97Format(byte[] data)
         {
             return BitConverter.ToUInt16(data, 0) == 0xA5EC;
