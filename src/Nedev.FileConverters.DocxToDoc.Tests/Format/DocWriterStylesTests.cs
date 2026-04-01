@@ -412,20 +412,23 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
-        public void ClampStdUpxData_WithOversizedData_TruncatesToByteMax()
+        public void ClampStdUpxData_WithOversizedData_TruncatesAtSprmBoundary()
         {
             var method = typeof(DocWriter).GetMethod("ClampStdUpxData", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.NotNull(method);
 
-            var input = new byte[600];
-            for (int index = 0; index < input.Length; index++)
+            var input = new List<byte>();
+            for (int index = 0; index < 64; index++)
             {
-                input[index] = (byte)(index % 251);
+                input.Add(0x43);
+                input.Add(0x4A);
+                input.Add(0x01);
+                input.Add(0x00);
             }
 
-            var output = (byte[])method!.Invoke(null, new object[] { input })!;
+            var output = (byte[])method!.Invoke(null, new object[] { input.ToArray() })!;
 
-            Assert.Equal(255, output.Length);
+            Assert.Equal(252, output.Length);
             for (int index = 0; index < output.Length; index++)
             {
                 Assert.Equal(input[index], output[index]);

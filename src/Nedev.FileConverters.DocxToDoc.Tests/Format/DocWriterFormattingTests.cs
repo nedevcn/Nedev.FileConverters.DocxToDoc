@@ -755,6 +755,33 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_RunFontSizeSpecifiedWithoutValue_WritesDefaultFontSizeSprmIntoChpx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "FontSizeSpecifiedWithoutValueTest" };
+            run.Properties.FontSize = null;
+            run.Properties.FontSizeSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x43, 0x4A, 0x01, 0x00 }));
+        }
+
+        [Fact]
         public void WriteDocBlocks_RunStyleSpecifiedFalse_WritesDisableSprmsIntoChpx()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

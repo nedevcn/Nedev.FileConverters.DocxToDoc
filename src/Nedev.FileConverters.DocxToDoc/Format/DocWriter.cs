@@ -4805,9 +4805,73 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return upxData;
             }
 
-            var clamped = new byte[byte.MaxValue];
-            Array.Copy(upxData, clamped, byte.MaxValue);
+            int safeLength = FindSafeStdUpxLength(upxData, byte.MaxValue);
+            var clamped = new byte[safeLength];
+            Array.Copy(upxData, clamped, safeLength);
             return clamped;
+        }
+
+        private static int FindSafeStdUpxLength(byte[] upxData, int maxLength)
+        {
+            int offset = 0;
+            int safeLength = 0;
+
+            while (offset + 2 <= upxData.Length && offset + 2 <= maxLength)
+            {
+                if (!TryGetKnownSprmOperandLength(upxData[offset], upxData[offset + 1], out int operandLength))
+                {
+                    break;
+                }
+
+                int sprmLength = 2 + operandLength;
+                if (offset + sprmLength > upxData.Length || offset + sprmLength > maxLength)
+                {
+                    break;
+                }
+
+                offset += sprmLength;
+                safeLength = offset;
+            }
+
+            return safeLength;
+        }
+
+        private static bool TryGetKnownSprmOperandLength(byte opLow, byte opHigh, out int operandLength)
+        {
+            operandLength = 0;
+
+            if ((opLow == 0x03 && opHigh == 0x24) || // justification
+                (opLow == 0x05 && opHigh == 0x24) || // keep next
+                (opLow == 0x06 && opHigh == 0x24) || // keep lines
+                (opLow == 0x07 && opHigh == 0x24) || // widow control
+                (opLow == 0x08 && opHigh == 0x24) || // page break before
+                (opLow == 0x11 && opHigh == 0x26) || // numbering level
+                (opLow == 0x35 && opHigh == 0x08) || // bold
+                (opLow == 0x36 && opHigh == 0x08) || // italic
+                (opLow == 0x37 && opHigh == 0x08) || // strike
+                (opLow == 0x3E && opHigh == 0x2A) || // underline
+                (opLow == 0x42 && opHigh == 0x2A) || // color
+                (opLow == 0x44 && opHigh == 0x24))   // contextual spacing
+            {
+                operandLength = 1;
+                return true;
+            }
+
+            if ((opLow == 0x0B && opHigh == 0x46) || // numbering id
+                (opLow == 0x0E && opHigh == 0x84) || // right indent
+                (opLow == 0x0F && opHigh == 0x84) || // left indent
+                (opLow == 0x11 && opHigh == 0x84) || // first line indent
+                (opLow == 0x22 && opHigh == 0x26) || // spacing before
+                (opLow == 0x23 && opHigh == 0x26) || // spacing after
+                (opLow == 0x24 && opHigh == 0x26) || // line spacing
+                (opLow == 0x43 && opHigh == 0x4A) || // font size
+                (opLow == 0x4F && opHigh == 0x4A))   // font index
+            {
+                operandLength = 2;
+                return true;
+            }
+
+            return false;
         }
 
         private static byte[] EncodeStyleNameForStd(string styleName)
@@ -5161,10 +5225,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             if (props.IsBold || props.IsBoldSpecified) { sprms.Add(0x35); sprms.Add(0x08); sprms.Add((byte)(props.IsBold ? 1 : 0)); }
             if (props.IsItalic || props.IsItalicSpecified) { sprms.Add(0x36); sprms.Add(0x08); sprms.Add((byte)(props.IsItalic ? 1 : 0)); }
             if (props.IsStrike || props.IsStrikeSpecified) { sprms.Add(0x37); sprms.Add(0x08); sprms.Add((byte)(props.IsStrike ? 1 : 0)); }
-            if (props.FontSize.HasValue)
+            if (props.FontSize.HasValue || props.FontSizeSpecified)
             {
                 sprms.Add(0x43); sprms.Add(0x4A);
-                short fontSizeHalfPoints = ClampFontSizeHalfPoints(props.FontSize.Value);
+                short fontSizeHalfPoints = ClampFontSizeHalfPoints(props.FontSize ?? 1);
                 sprms.Add((byte)(fontSizeHalfPoints & 0xFF));
                 sprms.Add((byte)((fontSizeHalfPoints >> 8) & 0xFF));
             }
