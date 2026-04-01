@@ -430,19 +430,27 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 
                 // End Paragraph
                 List<byte> paraSprms = new List<byte>();
-                if (para.Properties.Alignment != ParagraphModel.Justification.Left)
+                if (para.Properties.Alignment != ParagraphModel.Justification.Left || para.Properties.AlignmentSpecified)
                 {
-                    paraSprms.Add(0x03); paraSprms.Add(0x24); paraSprms.Add((byte)para.Properties.Alignment);
+                    paraSprms.Add(0x03);
+                    paraSprms.Add(0x24);
+                    paraSprms.Add(ClampJustificationValue(para.Properties.Alignment));
                 }
-                if (para.Properties.NumberingId.HasValue)
+                if (para.Properties.NumberingId.HasValue || para.Properties.NumberingIdSpecified)
                 {
                     paraSprms.Add(0x0B); paraSprms.Add(0x46);
-                    int lfoIndex = model.NumberingInstances.FindIndex(n => n.Id == para.Properties.NumberingId.Value) + 1;
-                    paraSprms.Add((byte)(lfoIndex & 0xFF)); paraSprms.Add((byte)((lfoIndex >> 8) & 0xFF));
-                    if (para.Properties.NumberingLevel.HasValue)
-                    {
-                        paraSprms.Add(0x11); paraSprms.Add(0x26); paraSprms.Add((byte)para.Properties.NumberingLevel.Value);
-                    }
+                    int lfoIndex = para.Properties.NumberingId.HasValue
+                        ? model.NumberingInstances.FindIndex(n => n.Id == para.Properties.NumberingId.Value) + 1
+                        : 0;
+                    ushort encodedLfoIndex = ClampLfoIndex(lfoIndex);
+                    paraSprms.Add((byte)(encodedLfoIndex & 0xFF));
+                    paraSprms.Add((byte)((encodedLfoIndex >> 8) & 0xFF));
+                }
+                if (para.Properties.NumberingLevel.HasValue || para.Properties.NumberingLevelSpecified)
+                {
+                    paraSprms.Add(0x11);
+                    paraSprms.Add(0x26);
+                    paraSprms.Add(ClampNumberingLevel(para.Properties.NumberingLevel));
                 }
                 AppendParagraphFormattingSprms(paraSprms, para.Properties);
 
@@ -1380,7 +1388,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
             // 7. Build Style Sheet (STSH)
             int fcStshf = (int)tableStream.Position;
-            WriteStyleSheet(tableWriter, model.Styles, model.Fonts);
+            WriteStyleSheet(tableWriter, model.Styles, model.Fonts, model.NumberingInstances);
             int lcbStshf = (int)tableStream.Position - fcStshf;
 
             // 8. Write Numbering (SttbLst and PlcfLfo)
@@ -4692,7 +4700,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
         }
 
-        private void WriteStyleSheet(BinaryWriter writer, List<Nedev.FileConverters.DocxToDoc.Model.StyleModel> styles, List<FontModel> fonts)
+        private void WriteStyleSheet(
+            BinaryWriter writer,
+            List<Nedev.FileConverters.DocxToDoc.Model.StyleModel> styles,
+            List<FontModel> fonts,
+            List<NumberingInstanceModel> numberingInstances)
         {
             // STSH structure (Style Sheet)
             // STSHI header (Style Sheet Information)
@@ -4719,11 +4731,11 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             writer.BaseStream.Seek(endPos, SeekOrigin.Begin);
 
             // Write STDs (Style Descriptions)
+            var styleSlots = ResolveStyleSlots(styles, cstd);
+            var styleIdToSlot = BuildStyleIdToSlotMap(styleSlots);
             for (int i = 0; i < cstd; i++)
             {
-                var style = styles.FirstOrDefault(s => s.StyleId == i);
-
-                if (style == null)
+                if (!styleSlots.TryGetValue(i, out var style))
                 {
                     // Empty slot
                     writer.Write((ushort)0); // cb (0 = empty slot)
@@ -4731,14 +4743,14 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 }
 
                 // Calculate STD size
-                byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(style.Name + "\0");
+                byte[] nameBytes = EncodeStyleNameForStd(style.Name);
                 int cbStd = 10 + nameBytes.Length; // Base (10) + name
 
                 // Add PAPX if present
                 byte[]? papxData = null;
                 if (style.ParagraphProps != null)
                 {
-                    papxData = BuildPapxFromStyle(style.ParagraphProps);
+                    papxData = ClampStdUpxData(BuildPapxFromStyle(style.ParagraphProps, numberingInstances));
                     cbStd += 1 + papxData.Length; // cbGrpprlPapx + data
                 }
 
@@ -4746,7 +4758,7 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 byte[]? chpxData = null;
                 if (style.CharacterProps != null)
                 {
-                    chpxData = BuildChpxFromStyle(style.CharacterProps, fonts);
+                    chpxData = ClampStdUpxData(BuildChpxFromStyle(style.CharacterProps, fonts));
                     cbStd += 1 + chpxData.Length; // cbGrpprlChpx + data
                 }
 
@@ -4754,8 +4766,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
 
                 // STD base (10 bytes)
                 writer.Write((byte)(style.IsParagraphStyle ? 1 : 2)); // sgc (style type)
-                writer.Write((byte)style.StyleId); // istdBase (parent style)
-                writer.Write((ushort)(style.NextStyle ?? style.StyleId)); // istdNext
+                int basedOnSlot = ResolveStyleReferenceSlot(style.BasedOn, i, styleIdToSlot);
+                int nextStyleSlot = ResolveStyleReferenceSlot(style.NextStyle, i, styleIdToSlot);
+                writer.Write(ClampStyleIndexToByte(basedOnSlot)); // istdBase (parent style)
+                writer.Write(ClampStyleIndexToUshort(nextStyleSlot)); // istdNext
                 writer.Write((ushort)0); // bchUpe - offset to UPX
                 writer.Write((ushort)0); // fHasUpe, fScratch, fHidden, etc.
                 writer.Write((byte)nameBytes.Length); // stzName length
@@ -4784,13 +4798,165 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
         }
 
-        private byte[] BuildPapxFromStyle(ParagraphModel.ParagraphProperties props)
+        private static byte[] ClampStdUpxData(byte[] upxData)
+        {
+            if (upxData.Length <= byte.MaxValue)
+            {
+                return upxData;
+            }
+
+            var clamped = new byte[byte.MaxValue];
+            Array.Copy(upxData, clamped, byte.MaxValue);
+            return clamped;
+        }
+
+        private static byte[] EncodeStyleNameForStd(string styleName)
+        {
+            string normalizedName = styleName ?? string.Empty;
+            byte[] nameBytes = Encoding.Unicode.GetBytes(normalizedName + "\0");
+            if (nameBytes.Length <= byte.MaxValue)
+            {
+                return nameBytes;
+            }
+
+            const int maxEvenByteLength = 254;
+            int maxCharsWithoutNull = (maxEvenByteLength / 2) - 1;
+            string truncatedName = normalizedName.Length > maxCharsWithoutNull
+                ? normalizedName.Substring(0, maxCharsWithoutNull)
+                : normalizedName;
+
+            return Encoding.Unicode.GetBytes(truncatedName + "\0");
+        }
+
+        private static Dictionary<int, StyleModel> ResolveStyleSlots(List<StyleModel> styles, int slotCount)
+        {
+            var slots = new Dictionary<int, StyleModel>();
+            var assignedStyles = new HashSet<StyleModel>();
+
+            foreach (var style in styles)
+            {
+                int styleId = style.StyleId;
+                if (styleId >= 0 && styleId < slotCount && !slots.ContainsKey(styleId))
+                {
+                    slots[styleId] = style;
+                    assignedStyles.Add(style);
+                }
+            }
+
+            int nextSlot = 0;
+            foreach (var style in styles)
+            {
+                if (assignedStyles.Contains(style))
+                {
+                    continue;
+                }
+
+                while (nextSlot < slotCount && slots.ContainsKey(nextSlot))
+                {
+                    nextSlot++;
+                }
+
+                if (nextSlot >= slotCount)
+                {
+                    break;
+                }
+
+                slots[nextSlot] = style;
+                assignedStyles.Add(style);
+                nextSlot++;
+            }
+
+            return slots;
+        }
+
+        private static Dictionary<int, int> BuildStyleIdToSlotMap(Dictionary<int, StyleModel> styleSlots)
+        {
+            var styleIdToSlot = new Dictionary<int, int>();
+            foreach (var entry in styleSlots.OrderBy(entry => entry.Key))
+            {
+                int styleId = entry.Value.StyleId;
+                if (!styleIdToSlot.ContainsKey(styleId))
+                {
+                    styleIdToSlot[styleId] = entry.Key;
+                }
+            }
+
+            return styleIdToSlot;
+        }
+
+        private static int ResolveStyleReferenceSlot(int? referenceStyleId, int currentSlot, Dictionary<int, int> styleIdToSlot)
+        {
+            if (!referenceStyleId.HasValue)
+            {
+                return currentSlot;
+            }
+
+            if (styleIdToSlot.TryGetValue(referenceStyleId.Value, out int resolvedSlot))
+            {
+                return resolvedSlot;
+            }
+
+            return currentSlot;
+        }
+
+        private static byte ClampStyleIndexToByte(int value)
+        {
+            if (value < 0)
+            {
+                return 0;
+            }
+
+            if (value > byte.MaxValue)
+            {
+                return byte.MaxValue;
+            }
+
+            return (byte)value;
+        }
+
+        private static ushort ClampStyleIndexToUshort(int value)
+        {
+            if (value < 0)
+            {
+                return 0;
+            }
+
+            if (value > ushort.MaxValue)
+            {
+                return ushort.MaxValue;
+            }
+
+            return (ushort)value;
+        }
+
+        private byte[] BuildPapxFromStyle(ParagraphModel.ParagraphProperties props, List<NumberingInstanceModel> numberingInstances)
         {
             var sprms = new List<byte>();
 
-            if (props.Alignment != ParagraphModel.Justification.Left)
+            if (props.Alignment != ParagraphModel.Justification.Left || props.AlignmentSpecified)
             {
-                sprms.Add(0x03); sprms.Add(0x24); sprms.Add((byte)props.Alignment);
+                sprms.Add(0x03);
+                sprms.Add(0x24);
+                sprms.Add(ClampJustificationValue(props.Alignment));
+            }
+
+            if (props.NumberingId.HasValue || props.NumberingIdSpecified)
+            {
+                sprms.Add(0x0B);
+                sprms.Add(0x46);
+                int lfoIndex = props.NumberingId.HasValue
+                    ? numberingInstances.FindIndex(n => n.Id == props.NumberingId.Value) + 1
+                    : 0;
+                ushort encodedLfoIndex = ClampLfoIndex(lfoIndex);
+                sprms.Add((byte)(encodedLfoIndex & 0xFF));
+                sprms.Add((byte)((encodedLfoIndex >> 8) & 0xFF));
+            }
+
+            if (props.NumberingLevel.HasValue || props.NumberingLevelSpecified)
+            {
+                sprms.Add(0x11);
+                sprms.Add(0x26);
+                sprms.Add(ClampNumberingLevel(props.NumberingLevel));
             }
 
             AppendParagraphFormattingSprms(sprms, props);
@@ -4855,14 +5021,75 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 sprms.Add((byte)((spacingAfter >> 8) & 0xFF));
             }
 
-            if (props.LineSpacing.HasValue)
+            if (props.LineSpacing.HasValue || props.LineSpacingSpecified)
             {
                 sprms.Add(0x24);
                 sprms.Add(0x26);
-                short lineSpacing = ClampToShort(props.LineSpacing.Value);
+                short lineSpacing = ResolveLineSpacingSprmValue(props);
                 sprms.Add((byte)(lineSpacing & 0xFF));
                 sprms.Add((byte)((lineSpacing >> 8) & 0xFF));
             }
+        }
+
+        private static short ResolveLineSpacingSprmValue(ParagraphModel.ParagraphProperties props)
+        {
+            int value = props.LineSpacing ?? 0;
+            string rule = props.LineSpacingRule ?? "auto";
+
+            if (string.Equals(rule, "exact", StringComparison.OrdinalIgnoreCase))
+            {
+                int exactValue = Math.Max(0, value);
+                return ClampToShort(-exactValue);
+            }
+
+            if (string.Equals(rule, "atLeast", StringComparison.OrdinalIgnoreCase))
+            {
+                return ClampToShort(Math.Max(0, value));
+            }
+
+            return ClampToShort(Math.Max(0, value));
+        }
+
+        private static byte ClampNumberingLevel(int? numberingLevel)
+        {
+            int level = numberingLevel ?? 0;
+            if (level < 0)
+            {
+                return 0;
+            }
+
+            if (level > 8)
+            {
+                return 8;
+            }
+
+            return (byte)level;
+        }
+
+        private static ushort ClampLfoIndex(int lfoIndex)
+        {
+            if (lfoIndex <= 0)
+            {
+                return 0;
+            }
+
+            if (lfoIndex > ushort.MaxValue)
+            {
+                return ushort.MaxValue;
+            }
+
+            return (ushort)lfoIndex;
+        }
+
+        private static byte ClampJustificationValue(ParagraphModel.Justification alignment)
+        {
+            int value = (int)alignment;
+            if (value < (int)ParagraphModel.Justification.Left || value > (int)ParagraphModel.Justification.Both)
+            {
+                return (byte)ParagraphModel.Justification.Left;
+            }
+
+            return (byte)value;
         }
 
         private static void AppendParagraphKeepSprms(List<byte> sprms, ParagraphModel.ParagraphProperties props)
@@ -4937,8 +5164,9 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             if (props.FontSize.HasValue)
             {
                 sprms.Add(0x43); sprms.Add(0x4A);
-                sprms.Add(BitConverter.GetBytes((short)props.FontSize.Value)[0]);
-                sprms.Add(BitConverter.GetBytes((short)props.FontSize.Value)[1]);
+                short fontSizeHalfPoints = ClampFontSizeHalfPoints(props.FontSize.Value);
+                sprms.Add((byte)(fontSizeHalfPoints & 0xFF));
+                sprms.Add((byte)((fontSizeHalfPoints >> 8) & 0xFF));
             }
 
             if (props.UnderlineSpecified || props.Underline != UnderlineType.None)
@@ -4961,9 +5189,10 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 int fontIndex = ResolveOrAppendFontIndex(fonts, props.FontName);
                 if (fontIndex >= 0)
                 {
+                    ushort encodedFontIndex = ClampFontIndex(fontIndex);
                     sprms.Add(0x4F); sprms.Add(0x4A); // sprmCRgFtc0
-                    sprms.Add((byte)(fontIndex & 0xFF));
-                    sprms.Add((byte)((fontIndex >> 8) & 0xFF));
+                    sprms.Add((byte)(encodedFontIndex & 0xFF));
+                    sprms.Add((byte)((encodedFontIndex >> 8) & 0xFF));
                 }
             }
 
@@ -4976,6 +5205,26 @@ namespace Nedev.FileConverters.DocxToDoc.Format
             }
 
             return sprms.ToArray();
+        }
+
+        private static short ClampFontSizeHalfPoints(int fontSizeHalfPoints)
+        {
+            return ClampToShort(Math.Max(1, fontSizeHalfPoints));
+        }
+
+        private static ushort ClampFontIndex(int fontIndex)
+        {
+            if (fontIndex <= 0)
+            {
+                return 0;
+            }
+
+            if (fontIndex > ushort.MaxValue)
+            {
+                return ushort.MaxValue;
+            }
+
+            return (ushort)fontIndex;
         }
 
         private static int ResolveOrAppendFontIndex(List<FontModel> fonts, string? fontName)
@@ -4995,7 +5244,15 @@ namespace Nedev.FileConverters.DocxToDoc.Format
                 return fonts.Count - 1;
             }
 
-            return fonts.Count > 0 ? 0 : -1;
+            if (fonts.Count == 0)
+            {
+                fonts.Add(new FontModel
+                {
+                    Name = "Times New Roman"
+                });
+            }
+
+            return 0;
         }
 
         private static byte ResolveColorIndex(string? color)

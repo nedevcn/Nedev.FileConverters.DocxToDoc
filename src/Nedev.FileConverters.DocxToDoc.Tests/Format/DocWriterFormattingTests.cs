@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.IO.Compression;
+using System.Reflection;
 using Nedev.FileConverters.DocxToDoc.Format;
 using Nedev.FileConverters.DocxToDoc.Model;
 using Xunit;
@@ -147,6 +148,60 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_ParagraphLineSpacingExact_WritesNegativeLineSpacingSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "LineSpacingExactTest" });
+            para.Properties.LineSpacing = 240;
+            para.Properties.LineSpacingRule = "exact";
+            para.Properties.LineSpacingRuleSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x24, 0x26, 0x10, 0xFF }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphLineSpacingAtLeast_WritesPositiveLineSpacingSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "LineSpacingAtLeastTest" });
+            para.Properties.LineSpacing = 240;
+            para.Properties.LineSpacingRule = "atLeast";
+            para.Properties.LineSpacingRuleSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x24, 0x26, 0xF0, 0x00 }));
+        }
+
+        [Fact]
         public void WriteDocBlocks_ParagraphIndent_WritesIndentSprmsIntoPapx()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -205,6 +260,221 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x0E, 0x84, 0x00, 0x00 }));
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x0F, 0x84, 0x00, 0x00 }));
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x84, 0x00, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphAlignmentSpecifiedLeft_WritesLeftAlignmentSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "AlignmentLeftSpecifiedTest" });
+            para.Properties.Alignment = ParagraphModel.Justification.Left;
+            para.Properties.AlignmentSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x03, 0x24, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphAlignmentOutOfRange_ClampsAlignmentSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "AlignmentClampTest" });
+            para.Properties.Alignment = (ParagraphModel.Justification)99;
+            para.Properties.AlignmentSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x03, 0x24, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphNumberingSpecifiedWithoutValue_WritesNumberingDisableSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "NumberingDisableSpecifiedTest" });
+            para.Properties.NumberingIdSpecified = true;
+            para.Properties.NumberingLevelSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x0B, 0x46, 0x00, 0x00 }));
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x26, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphNumberingLevelOutOfRange_ClampsLevelSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "NumberingLevelClampTest" });
+            para.Properties.NumberingIdSpecified = true;
+            para.Properties.NumberingLevel = 99;
+            para.Properties.NumberingLevelSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x26, 0x08 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphNumberingLevelNegative_ClampsLevelSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "NumberingLevelNegativeClampTest" });
+            para.Properties.NumberingIdSpecified = true;
+            para.Properties.NumberingLevel = -7;
+            para.Properties.NumberingLevelSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x26, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphNumberingLevelSpecifiedWithoutNumberingId_WritesLevelSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "NumberingLevelOnlySpecifiedTest" });
+            para.Properties.NumberingLevel = 3;
+            para.Properties.NumberingLevelSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x11, 0x26, 0x03 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_ParagraphNumberingIdNotFound_WritesZeroLfoSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "NumberingIdNotFoundTest" });
+            para.Properties.NumberingId = 9999;
+            para.Properties.NumberingIdSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x0B, 0x46, 0x00, 0x00 }));
+        }
+
+        [Fact]
+        public void ClampLfoIndex_WithOverflow_ClampsToUshortMax()
+        {
+            var method = typeof(DocWriter).GetMethod("ClampLfoIndex", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            ushort value = (ushort)method!.Invoke(null, new object[] { int.MaxValue })!;
+            Assert.Equal(ushort.MaxValue, value);
+        }
+
+        [Fact]
+        public void ClampFontIndex_WithOverflow_ClampsToUshortMax()
+        {
+            var method = typeof(DocWriter).GetMethod("ClampFontIndex", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            ushort value = (ushort)method!.Invoke(null, new object[] { int.MaxValue })!;
+            Assert.Equal(ushort.MaxValue, value);
+        }
+
+        [Fact]
+        public void ClampFontIndex_WithNegativeValue_ClampsToZero()
+        {
+            var method = typeof(DocWriter).GetMethod("ClampFontIndex", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            ushort value = (ushort)method!.Invoke(null, new object[] { -123 })!;
+            Assert.Equal((ushort)0, value);
         }
 
         [Fact]
@@ -340,6 +610,32 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
         }
 
         [Fact]
+        public void WriteDocBlocks_ParagraphLineSpacingSpecifiedWithoutValue_WritesZeroLineSpacingSprmIntoPapx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            para.Runs.Add(new RunModel { Text = "LineSpacingSpecifiedWithoutValueTest" });
+            para.Properties.LineSpacing = null;
+            para.Properties.LineSpacingSpecified = true;
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x24, 0x26, 0x00, 0x00 }));
+        }
+
+        [Fact]
         public void WriteDocBlocks_ParagraphKeepFlagsSpecifiedFalse_WritesDisableSprmsIntoPapx()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -402,6 +698,60 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
             byte[] wordDocData = wordDocStream.GetData();
 
             Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x42, 0x2A, 0x06 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunFontSizeTooLarge_ClampsFontSizeSprmIntoChpx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "FontSizeLargeClampTest" };
+            run.Properties.FontSize = int.MaxValue;
+            run.Properties.FontSizeSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x43, 0x4A, 0xFF, 0x7F }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunFontSizeNonPositive_ClampsFontSizeSprmIntoChpx()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "FontSizeZeroClampTest" };
+            run.Properties.FontSize = 0;
+            run.Properties.FontSizeSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x43, 0x4A, 0x01, 0x00 }));
         }
 
         [Fact]
@@ -479,6 +829,33 @@ namespace Nedev.FileConverters.DocxToDoc.Tests.Format
 
             var para = new ParagraphModel();
             var run = new RunModel { Text = "DefaultFontTest" };
+            run.Properties.FontNameSpecified = true;
+            para.Runs.Add(run);
+            model.Content.Add(para);
+
+            var writer = new DocWriter();
+            using var ms = new MemoryStream();
+
+            writer.WriteDocBlocks(model, ms);
+            ms.Position = 0;
+
+            using var compoundFile = new OpenMcdf.CompoundFile(ms);
+            Assert.True(compoundFile.RootStorage.TryGetStream("WordDocument", out var wordDocStream));
+
+            byte[] wordDocData = wordDocStream.GetData();
+
+            Assert.True(ContainsSubsequence(wordDocData, new byte[] { 0x4F, 0x4A, 0x00, 0x00 }));
+        }
+
+        [Fact]
+        public void WriteDocBlocks_RunFontSpecifiedWithoutNameAndEmptyFontTable_WritesDefaultFontSprm()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            var model = new DocumentModel();
+
+            var para = new ParagraphModel();
+            var run = new RunModel { Text = "DefaultFontWithEmptyTableTest" };
             run.Properties.FontNameSpecified = true;
             para.Runs.Add(run);
             model.Content.Add(para);
